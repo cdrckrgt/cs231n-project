@@ -1,0 +1,26 @@
+\begin{thebibliography}{1}
+
+\bibitem{tu-berlin-sketch}
+Mathias Eitz, James Hays, and Marc Alexa.
+\newblock How do humans sketch objects?
+\newblock {\em ACM Trans. Graph. (Proc. SIGGRAPH)}, 31(4):44:1--44:10, 2012.
+
+\bibitem{pix2pix}
+Phillip Isola, Jun{-}Yan Zhu, Tinghui Zhou, and Alexei~A. Efros.
+\newblock Image-to-image translation with conditional adversarial networks.
+\newblock {\em CoRR}, abs/1611.07004, 2016.
+
+\bibitem{imagenet}
+Olga Russakovsky, Jia Deng, Hao Su, Jonathan Krause, Sanjeev Satheesh, Sean Ma,
+  Zhiheng Huang, Andrej Karpathy, Aditya Khosla, Michael~S. Bernstein,
+  Alexander~C. Berg, and Fei{-}Fei Li.
+\newblock Imagenet large scale visual recognition challenge.
+\newblock {\em CoRR}, abs/1409.0575, 2014.
+
+\bibitem{cycleGAN}
+Jun{-}Yan Zhu, Taesung Park, Phillip Isola, and Alexei~A. Efros.
+\newblock Unpaired image-to-image translation using cycle-consistent
+  adversarial networks.
+\newblock {\em CoRR}, abs/1703.10593, 2017.
+
+\end{thebibliography}
