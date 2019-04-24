@@ -65,14 +65,18 @@
 \section{What is the problem that you will be investigating? Why is it interesting?}
 
 We are investigating unpaired image-to-image translation with generative adversarial networks.
-This work was demonstrated in \cite{cycleGAN} and \cite{pix2pix}.
-The pix2pix paper demonstrates how we can use paired images in training to create an image-to-image mapping from one domain to another.
-With CycleGAN, we can shift to using unpaired images for each domain.
+This work was demonstrated in \cite{cycleGAN}.
+Work done in the same lab \cite{pix2pix} demonstrates how we can use paired images in training to create an image-to-image mapping from one domain to another.
+The specific image-to-image task that we're aiming to implement is \href{https://affinelayer.com/pixsrv/}{this}, which demonstrates a couple examples of sketch-to-photo translations trained using the pix2pix model.
+We aim to do something similar, using CycleGAN to instead train on unpaired images.
+The relaxation that unpaired training gives us allows for easier creation of datasets and combinations of domains -- we can simply swap a whole domain and retrain rather than find image-to-image pairs for that specific translation task.
 
 \section{What reading will you examine to provide context and background?}
 
+\href{https://arxiv.org/abs/1406.2661}{GAN} \\
 \href{https://arxiv.org/pdf/1703.10593.pdf}{CycleGAN} \\
 \href{https://arxiv.org/abs/1611.07004}{pix2pix} \\
+\href{https://affinelayer.com/pixsrv/}{pix2pix demo} \\
 \href{https://arxiv.org/abs/1801.02753}{SketchyGAN} \\
 \href{https://arxiv.org/abs/1903.07291}{SPADE} \\
 \href{https://quickdraw.withgoogle.com/}{Google Drawing Guessing Game} \\
@@ -80,20 +84,39 @@ With CycleGAN, we can shift to using unpaired images for each domain.
 \section{What method or algorithm are you proposing? If there are existing implementations, will you use them and how? How do you plan to improve or modify such implementations? You don't have to have an exact answer at this point, but you should have a general sense of how you will approach the problem you are working on. }
 
 We will use CycleGAN to generate the image-to-image translations.
-We use the sketch as input, and then the GAN produces an image that it believes is in the target domain. 
+The idea is to get a dataset of sketches of objects (bananas for example) and a dataset of photos of that object.
+Then we'd train the GAN to be able to produce a photo corresponding to sketch input. 
+We'd use the sketch as input, and then the GAN would produce an image that it believes is in the target domain. 
 The discriminator judges this output, deciding whether the generated image was real or fake.
-When a threshold has been reached, we have a GAN capable of producing fake images that belong to the target domain that corresponds to the input image, because of the cyclic property of CycleGANs.
-
-\href{https://github.com/yunjey/mnist-svhn-transfer}{Simple CycleGAN} \\
+When a threshold has been reached, we have a GAN capable of producing fake images that belong to the target domain that corresponds to the input image.
+We imagine that much of the difficulty in the project will come from cleaning and putting together a decently sized dataset (either through using existing ones of even creating sketches from photos as in \cite{pix2pix}) and also from tuning the model to produce reasonable outputs.
+Several libraries exist for training GANs and specifically CycleGANs, such as the reference implementation used in the paper, code used in a class at University of Toronto, and code from other researchers. \\
+\href{https://github.com/yunjey/mnist-svhn-transfer}{CycleGAN from Yunjey Choi} \\
+\href{www.cs.toronto.edu/~rgrosse/courses/csc321_2018/assignments/a4-code.zip}{UToronto Code}
+\href{https://github.com/junyanz/pytorch-CycleGAN-and-pix2pix}{Code from paper}
 
 \section{What data will you use? If you are collecting new data, how will you do it?}
 
-We will combine labeled data from TU-Berlin sketch dataset \cite{tu-berlin-sketch} and ImageNet \cite{imagenet} to create our domains. 
+We will try to combine data from the TU-Berlin sketch dataset \cite{tu-berlin-sketch} and ImageNet \cite{imagenet} to create our domains. 
+Because CycleGANs don't require paired images, we think it will be easier to create our dataset than with traditional GANs.
+We won't need to label the data ourselves, simply pull data that belongs to our domains and use them directly in training.
 
 \section{How will you evaluate your results? Qualitatively, what kind of results do you expect (e.g. plots or figures)? Quantitatively, what kind of analysis will you use to evaluate and/or compare your results (e.g. what performance metrics or statistical tests)? }
 
-Qualitative: whether the picture we draw can be translated to a realistic image. \\
-Quantitative: Inception Score, Fr\'echet Inception Distance
+As for qualitative evaluation, it will be simple to look at the output for a test image and decide whether it is 
+\begin{itemize}
+\item photorealistic
+\item a faithful representation of the original sketch
+\item actually belongs to the target domain
+\end{itemize}
+
+Because we are doing unsupervised learning, it is difficult to quantify how well our generator works. However, a few metrics exist:
+\begin{itemize}
+\item Inception Score, comparing conditional label distribution to marginal label distribution for generated samples
+\item Fr\'echet Inception Distance, comparing activation distributions of generated samples vs. real samples
+\item MTurk classification, determining whether real people can distinguish real images vs. fake images
+\item FCN score, using semantic classifiers to determine whether what the classifier sees is what we wish to generate
+\end{itemize}
 
 \bibliography{ref}
 \bibliographystyle{plain}
