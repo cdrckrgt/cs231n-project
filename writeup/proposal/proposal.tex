@@ -70,11 +70,14 @@ Work done in the same lab \cite{pix2pix} demonstrates how we can use paired imag
 The specific image-to-image task that we're aiming to implement is \href{https://affinelayer.com/pixsrv/}{this}, which demonstrates a couple examples of sketch-to-photo translations trained using the pix2pix model.
 We aim to do something similar, using CycleGAN to instead train on unpaired images.
 The relaxation that unpaired training gives us allows for easier creation of datasets and combinations of domains -- we can simply swap a whole domain and retrain rather than find image-to-image pairs for that specific translation task.
+Our project differs from \cite{bicyclegan} in that we aren't doing multi-modal image translation, just from one domain to another. 
+We are essentially implementing the demo from \cite{pix2pix} with an unpaired dataset and architecture matching that of \cite{cycleGAN}
 
 \section{What reading will you examine to provide context and background?}
 
 \href{https://arxiv.org/abs/1406.2661}{GAN} \\
 \href{https://arxiv.org/pdf/1703.10593.pdf}{CycleGAN} \\
+\href{https://arxiv.org/abs/1711.11586}{BicycleGAN} \\
 \href{https://arxiv.org/abs/1611.07004}{pix2pix} \\
 \href{https://affinelayer.com/pixsrv/}{pix2pix demo} \\
 \href{https://arxiv.org/abs/1801.02753}{SketchyGAN} \\
@@ -90,6 +93,9 @@ We'd use the sketch as input, and then the GAN would produce an image that it be
 The discriminator judges this output, deciding whether the generated image was real or fake.
 When a threshold has been reached, we have a GAN capable of producing fake images that belong to the target domain that corresponds to the input image.
 We imagine that much of the difficulty in the project will come from cleaning and putting together a decently sized dataset (either through using existing ones of even creating sketches from photos as in \cite{pix2pix}) and also from tuning the model to produce reasonable outputs.
+Again, we are planning on implementing one of the applications suggested in the CycleGAN paper, where we use unpaired images of sketches and the real object for image translation.
+As we go through implementations of CycleGAN and learn more about GANs in general, we will try to experiment with our implementation and see if we can improve on it.
+
 Several libraries exist for training GANs and specifically CycleGANs, such as the reference implementation used in the paper, code used in a class at University of Toronto, and code from other researchers. \\
 \href{https://github.com/yunjey/mnist-svhn-transfer}{CycleGAN from Yunjey Choi} \\
 \href{www.cs.toronto.edu/~rgrosse/courses/csc321_2018/assignments/a4-code.zip}{UToronto Code} \\
@@ -99,7 +105,8 @@ Several libraries exist for training GANs and specifically CycleGANs, such as th
 
 We will try to combine data from the TU-Berlin sketch dataset \cite{tu-berlin-sketch} and ImageNet \cite{imagenet} to create our domains. 
 Because CycleGANs don't require paired images, we think it will be easier to create our dataset than with traditional GANs.
-We won't need to label the data ourselves, simply pull data that belongs to our domains and use them directly in training.
+We won't need to label the data ourselves, we'll simply pull data that belongs to our domains and use them directly in training.
+If need be, we can follow the approach of \cite{pix2pix} and generate edges from photos to augment our dataset.
 
 \section{How will you evaluate your results? Qualitatively, what kind of results do you expect (e.g. plots or figures)? Quantitatively, what kind of analysis will you use to evaluate and/or compare your results (e.g. what performance metrics or statistical tests)? }
 
