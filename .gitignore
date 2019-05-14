@@ -105,3 +105,6 @@ venv.bak/
 
 # mac stuff
 .DS_Store
+
+# ignore dataset lest we upload GBs to github
+data/*
