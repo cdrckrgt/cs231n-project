@@ -18,16 +18,59 @@ import torch.nn.functional as F
 import torch
 
 
-nb_epochs = 10
-batch_size = 4
+nb_epochs = 5000
+# batch_size needs to evenly divide size of dataset, or we get shape issues later on
+batch_size = 20 # weird
 lr = 1e-3
 b1 = 0.5
 b2 = 0.999
 latent_dim = 100
-sample_interval = 400
+sample_interval = 100
 
-img_shape = (256, 256, 3) # i think
-img_size = 256
+# Configure data loader
+
+class SketchyDataset(Dataset):
+    
+    def __init__(self, root_dir, transform=None):
+        self.root_dir = root_dir
+        self.image_names = os.listdir(self.root_dir)
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.image_names)
+
+    def __getitem__(self, idx):
+        image_path = self.root_dir + '/' + self.image_names[idx]
+        sample = Image.open(image_path)
+
+        if self.transform:
+            sample = self.transform(sample)
+
+        sample = np.array(sample).reshape(3, 64, 64)
+        return sample
+
+transform = transforms.Compose([
+    transforms.Resize((64, 64)) # downsample the image, too large for efficient training
+])
+
+sketch_dataset = SketchyDataset(root_dir='../data/tree_sketches', transform=transform)
+photo_dataset = SketchyDataset(root_dir='../data/tree_photos', transform=transform)
+
+dataloader1 = torch.utils.data.DataLoader(
+    sketch_dataset,
+    batch_size=batch_size,
+    shuffle=True,
+)
+
+dataloader2 = torch.utils.data.DataLoader(
+    photo_dataset,
+    batch_size=batch_size,
+    shuffle=True,
+)
+
+
+img_shape = (64, 64, 3) # i think
+img_size = 64
 channels = 3
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -130,47 +173,6 @@ coupled_discriminators.to(device)
 coupled_generators.apply(weights_init_normal)
 coupled_discriminators.apply(weights_init_normal)
 
-# Configure data loader
-
-class SketchyDataset(Dataset):
-    
-    def __init__(self, root_dir, transform=None):
-        self.root_dir = root_dir
-        self.image_names = os.listdir(self.root_dir)
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.image_names)
-
-    def __getitem__(self, idx):
-        image_path = self.root_dir + '/' + self.image_names[idx]
-        sample = Image.open(image_path)
-
-        if self.transform:
-            sample = self.transform(sample)
-
-        sample = np.array(sample).reshape(3, 256, 256)
-        return sample
-
-transform = transforms.Compose([
-    transforms.RandomRotation(180)
-])
-
-sketch_dataset = SketchyDataset(root_dir='../data/tree_sketches', transform=transform)
-photo_dataset = SketchyDataset(root_dir='../data/tree_photos', transform=transform)
-
-dataloader1 = torch.utils.data.DataLoader(
-    sketch_dataset,
-    batch_size=batch_size,
-    shuffle=True,
-)
-
-dataloader2 = torch.utils.data.DataLoader(
-    photo_dataset,
-    batch_size=batch_size,
-    shuffle=True,
-)
-
 # Optimizers
 optimizer_G = torch.optim.Adam(coupled_generators.parameters(), lr=lr, betas=(b1, b2))
 optimizer_D = torch.optim.Adam(coupled_discriminators.parameters(), lr=lr, betas=(b1, b2))
@@ -234,11 +236,11 @@ for epoch in range(nb_epochs):
         optimizer_D.step()
 
         print(
-            "[Epoch %d/%d] [Batch %d/%d] [D loss: %f] [G loss: %f]"
-            % (epoch, nb_epochs, i, len(dataloader1), d_loss.item(), g_loss.item())
+            "[Epoch %d/%d] [Batch %d] [D loss: %f] [G loss: %f]"
+            % (epoch, nb_epochs, i, d_loss.item(), g_loss.item())
         )
 
-        batches_done = epoch * len(dataloader1) + i
+        batches_done = epoch * batch_size + i
         if batches_done % sample_interval == 0:
             gen_imgs = torch.cat((gen_imgs1.data, gen_imgs2.data), 0)
             utils.save_image(gen_imgs, "../images/%d.png" % batches_done, nrow=8, normalize=True)
