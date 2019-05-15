@@ -108,3 +108,5 @@ venv.bak/
 
 # ignore dataset lest we upload GBs to github
 data/*
+# same for images
+images/*
