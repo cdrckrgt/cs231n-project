@@ -69,13 +69,13 @@ The original Generative Adversarial Network (GAN) proposed by Goodfellow et al. 
 \href{https://arxiv.org/abs/1606.07536}{CoGAN} \\
 
 \section{Problem Statement}
-describe image-to-image translation, use cases, motivation
+The problem we are addressing is image-to-image translation from an input domain $X$ of hand-drawn tree sketches to the output domain $Y$ of realistic photographs of trees. Specifically, we are working with unpaired training data, meaning there is no mapping between sketches $x_i\in X$ and target photos $y_j \in Y$. Often, finding paired data for the image-to-image translation task is difficult. Moreover, using unpaired image data allows for independent collection of input and output training sets. This motivates the problem that we are attempting to solve.
 
 \section{Technical Approach}
 describe cyclegan
 
 \section{Dataset}
-We will be using a subset of the Sketchy dataset, as described in \cite{sangkloy2016sketchy}. The dataset consists of a crowd-sourced collection of sketch-photo pairs. The total collection consists of 75,471 sketches of 12,500 photos (125 object categories). We will be working specifically with the 'tree' subset, which consists of 100 photos and 534 sketches. Although there is a naturally defined pairing between photos and sketches, we will be ignoring this mapping in our implementation of the unpaired translation.
+We will be using a subset of the Sketchy dataset, as described in \cite{sangkloy2016sketchy}. The dataset consists of a crowd-sourced collection of sketch-photo pairs. The total collection consists of 75,471 sketches of 12,500 photos (125 object categories). We will be working specifically with the 'tree' subset, which consists of 100 photos and 534 sketches. Although there is a naturally defined pairing between photos and sketches, we will be ignoring this mapping in our implementation of unpaired translation. Currently, we are preprocessing both domains in our baseline by zero-centering and scaling pixel values to the [-1, 1] range. We are planning on normalizing data for both domains in our implementation of CycleGAN as well.
 
 \section{Baseline Results}
 describe cogan method, results
