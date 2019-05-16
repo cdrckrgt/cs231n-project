@@ -87,29 +87,35 @@ We let the true distributions of the domains be $p_X$ and $p_Y$.
 Just as in \cite{gan}, we will use discriminators $D_X$ and $D_Y$ as adversarial networks to the generators, which we will train to distinguish between elements in $X$ and $p_X$ and $Y$ and $p_Y$, respectively.
 CycleGAN uses two losses per generator function.
 The first loss is adversarial, where the loss function for $G$ and its discriminator $D_Y$ is:
-\begin{multline}
-\displaystyle \mathcal{L}_{GAN}(G, D_Y, X, Y) = \\
+\begin{equation}
+\begin{split}
+\displaystyle \mathcal{L}_{GAN}(G, D_Y, X, Y) = 
 \mathbb{E}_{y \sim p_Y}[\log{D_Y(y)}]
-+ \mathbb{E}_{x \sim p_X}[\log{1 - D_Y(G(x))}]
-\end{multline}.
+\\ + \mathbb{E}_{x \sim p_X}[\log{(1 - D_Y(G(x)))}]
+\end{split}
+\end{equation}
 and the objective is $\displaystyle \min_{G} \max_{D_Y} \mathcal{L}_{GAN}$.
 We can apply this without loss of generality to $F$ and its discriminator $D_X$.
 Because it is possible for a network to map an input image $x$ to multiple images in $Y$, we use a cycle consistency loss to guarantee that there is a unique mapping.
 Specifically, we wish to enforce that for images $x$ and $y$ $F(G(x)) \approx x$ (forward cycle consistency) and $G(F(y)) \approx y$ (backward cycle consistency).
 The loss used is:
-\begin{multline}
-\displaystyle \mathcal{L}_{cyc} = \\
+\begin{equation}
+\begin{split}
+\displaystyle \mathcal{L}_{cyc} = 
 \mathbb{E}_{x \sim p_X}[\Vert{F(G(x)) - x}\Vert_1]
-+ \mathbb{E}_{y \sim p_Y}[\Vert{G(F(y)) - y}\Vert_1]
-\end{multline}.
+\\ + \mathbb{E}_{y \sim p_Y}[\Vert{G(F(y)) - y}\Vert_1]
+\end{split}
+\end{equation}
 
 Then the full loss function is:
-\begin{multline}
-\displaystyle \mathcal{L}(G, F, D_X, D_Y) = \\
+\begin{equation}
+\begin{split}
+\displaystyle \mathcal{L}(G, F, D_X, D_Y) = 
 \mathcal{L}_{GAN}(G, D_Y, X, Y)
-+ \mathcal{L}_{GAN}(F, D_X, Y, X)
-+ \lambda\mathcal{L}_{cyc}(G, F)
-\end{multline},
+\\+ \mathcal{L}_{GAN}(F, D_X, Y, X)
+\\+ \lambda\mathcal{L}_{cyc}(G, F)
+\end{split}
+\end{equation}
 where $\lambda$ is a parameter that determines the importance of cyclic consistency loss vs. adversarial loss.
 Minimizing this loss through
 \begin{equation}
