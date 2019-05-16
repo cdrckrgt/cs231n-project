@@ -120,8 +120,26 @@ yields $G^*$ and $F^*$, our optimal mapping functions.
 We will be using a subset of the Sketchy dataset, as described in \cite{sangkloy2016sketchy}. The dataset consists of a crowd-sourced collection of sketch-photo pairs. The total collection consists of 75,471 sketches of 12,500 photos (125 object categories). We will be working specifically with the 'tree' subset, which consists of 100 photos and 534 sketches. Although there is a naturally defined pairing between photos and sketches, we will be ignoring this mapping in our implementation of unpaired translation. Currently, we are preprocessing both domains in our baseline by zero-centering and scaling pixel values to the [-1, 1] range. We are planning on normalizing data for both domains in our implementation of CycleGAN as well.
 
 \section{Baseline Results}
-describe cogan method, results
+We use CoGAN \cite{cogan} as a baseline since it is a simpler model that can also learn joint distributions.
+Our method with CoGAN is to learn the joint distribution of images from $p_X$ and $p_Y$, where $p_X$ and $p_Y$ are the marginal distributions of tree sketches and tree photos, respectively.
+CoGAN allows us to learn $G_X$ and $G_Y$, generative models that allow us to synthesize new images in the distributions $X$ and $Y$.
+Since these networks are coupled, i.e. they share parameters in the decoding section of the generator and in the encoding section of the discriminator, we can use both to learn a mapping between $X$ and $Y$.
+For a given input $x$, we must find a noise vector $z^*$ such that $G_X(z^*) \approx x$.
+The corresponding image $y$ is then just $G_Y(z^*)$.
 
+At the moment, our baseline results are almost completely unsuccessful.
+While Zhu et al. \cite{cycleGAN} note that CoGAN was relatively unsuccessful at producing realistic mappings, our generators fail to capture any semblance of the target domain.
+We suspect that this is due to the lack of a large dataset, leading us to believe that we need data augmentation (rotations, jitter for the real photos, etc.).
+We also underestimated the difficulty of training generative networks, where we found ourselves struggling with hyperparameters and tricks to get the loss values to converge.
+The loss functions for the generators and discriminators in our CoGAN approach can be seen in \ref{cogan_loss}.
+
+The CoGAN model fails to produce images that can be recognized as realistic trees, with most images qualitatively looking like random noise.
+Some images of produces outputs at different epochs can be seen in \ref{cogan_pics}.
+
+Despite this, we check out generated images using the Fr\'echet Inception Distance.
+Our generated images for sketches of trees received an FID score of 526.59 with our best model, while generated images for real trees received an FID score of 538.97.
+We hope to dramatically reduce these scores in the next few days, as we need a decent and functional baseline to even compare against CycleGAN on the same task.
+For perspective, other implementations of GANs trained on other datasets can achieve FID scores wel below 100, somtimes even below 20.
 {\small
 \bibliographystyle{ieee}
 \bibliography{ref}
