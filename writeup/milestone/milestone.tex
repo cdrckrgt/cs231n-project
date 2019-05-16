@@ -20,8 +20,8 @@
 \def\httilde{\mbox{\tt\raisebox{-.5ex}{\symbol{126}}}}
 
 % Pages are numbered in submission mode, and unnumbered in camera-ready
-%\ifcvprfinal\pagestyle{empty}\fi
-\setcounter{page}{4321}
+\ifcvprfinal\pagestyle{empty}\fi
+% \setcounter{page}{4321}
 \begin{document}
 
 
@@ -63,7 +63,9 @@ Our project differs from \cite{bicyclegan} in that we aren't doing multi-modal i
 We are essentially implementing the demo from \cite{pix2pix} with an unpaired dataset and architecture matching that of \cite{cycleGAN}
 
 \section{Related Work}
+describe some of these, how they relate \\
 \href{https://arxiv.org/abs/1406.2661}{GAN} \\
+The original Generative Adversarial Network (GAN) proposed by Goodfellow et al. proposes a network that learns an approximation of a distribution of data $p_{X}$.
 \href{https://arxiv.org/pdf/1703.10593}{CycleGAN} \\
 \href{https://arxiv.org/abs/1611.07004}{pix2pix} \\
 \href{https://affinelayer.com/pixsrv/}{pix2pix demo} \\
@@ -84,7 +86,7 @@ describe cogan method, results
 
 {\small
 \bibliographystyle{ieee}
-\bibliography{egbib}
+\bibliography{ref}
 }
 
 \end{document}
