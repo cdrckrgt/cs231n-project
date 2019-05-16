@@ -5,6 +5,11 @@ P.~Isola, J.~Zhu, T.~Zhou, and A.~A. Efros.
 \newblock Image-to-image translation with conditional adversarial networks.
 \newblock {\em CoRR}, abs/1611.07004, 2016.
 
+\bibitem{sangkloy2016sketchy}
+P.~Sangkloy, N.~Burnell, C.~Ham, and J.~Hays.
+\newblock The sketchy database: learning to retrieve badly drawn bunnies.
+\newblock {\em ACM Transactions on Graphics (TOG)}, 35(4):119, 2016.
+
 \bibitem{cycleGAN}
 J.~Zhu, T.~Park, P.~Isola, and A.~A. Efros.
 \newblock Unpaired image-to-image translation using cycle-consistent
