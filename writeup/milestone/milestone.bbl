@@ -1,9 +1,21 @@
 \begin{thebibliography}{1}\itemsep=-1pt
 
+\bibitem{gan}
+I.~Goodfellow, J.~Pouget-Abadie, M.~Mirza, B.~Xu, D.~Warde-Farley, S.~Ozair,
+  A.~Courville, and Y.~Bengio.
+\newblock Generative adversarial nets.
+\newblock In {\em Advances in neural information processing systems}, pages
+  2672--2680, 2014.
+
 \bibitem{pix2pix}
 P.~Isola, J.~Zhu, T.~Zhou, and A.~A. Efros.
 \newblock Image-to-image translation with conditional adversarial networks.
 \newblock {\em CoRR}, abs/1611.07004, 2016.
+
+\bibitem{cogan}
+M.~Liu and O.~Tuzel.
+\newblock Coupled generative adversarial networks.
+\newblock {\em CoRR}, abs/1606.07536, 2016.
 
 \bibitem{cycleGAN}
 J.~Zhu, T.~Park, P.~Isola, and A.~A. Efros.
