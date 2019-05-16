@@ -110,3 +110,4 @@ venv.bak/
 data/*
 # same for images
 images/*
+weights/*

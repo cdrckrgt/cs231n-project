@@ -18,16 +18,18 @@ import torch.nn.functional as F
 import torch
 
 
-nb_epochs = 5000
+nb_epochs = 1000
 # batch_size needs to evenly divide size of dataset, or we get shape issues later on
 batch_size = 20 # weird
 lr = 1e-3
 b1 = 0.5
 b2 = 0.999
-latent_dim = 100
+latent_dim = 50 # used to be 100
 sample_interval = 100
 
 # Configure data loader
+
+from sklearn.preprocessing import MinMaxScaler
 
 class SketchyDataset(Dataset):
     
@@ -35,6 +37,7 @@ class SketchyDataset(Dataset):
         self.root_dir = root_dir
         self.image_names = os.listdir(self.root_dir)
         self.transform = transform
+        self.scaler  = MinMaxScaler((-1, 1)) # used to not normalize
 
     def __len__(self):
         return len(self.image_names)
@@ -47,6 +50,8 @@ class SketchyDataset(Dataset):
             sample = self.transform(sample)
 
         sample = np.array(sample).reshape(3, 64, 64)
+        self.scaler.fit(sample)
+        sample = self.scaler.transform(sample) # normalize between (-1, 1)
         return sample
 
 transform = transforms.Compose([
@@ -175,6 +180,7 @@ coupled_discriminators.apply(weights_init_normal)
 
 # Optimizers
 optimizer_G = torch.optim.Adam(coupled_generators.parameters(), lr=lr, betas=(b1, b2))
+# discriminator lr set to 0.05 generator lr, prevent overpowering
 optimizer_D = torch.optim.Adam(coupled_discriminators.parameters(), lr=lr, betas=(b1, b2))
 
 Tensor = torch.cuda.FloatTensor if device == 'cuda' else torch.FloatTensor
@@ -243,8 +249,10 @@ for epoch in range(nb_epochs):
         batches_done = epoch * batch_size + i
         if batches_done % sample_interval == 0:
             gen_imgs = torch.cat((gen_imgs1.data, gen_imgs2.data), 0)
-            utils.save_image(gen_imgs, "../images/%d.png" % batches_done, nrow=8, normalize=True)
+            utils.save_image(gen_imgs, "../images/%09d.png" % batches_done, nrow=8, normalize=True)
 
 
 # this for inception score
 # https://github.com/sbarratt/inception-score-pytorch/blob/master/inception_score.py
+
+torch.save(coupled_generators.state_dict(), 'weights/generator_weights_03.pt')
