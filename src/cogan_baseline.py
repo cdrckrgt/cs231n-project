@@ -50,8 +50,9 @@ class SketchyDataset(Dataset):
             sample = self.transform(sample)
 
         sample = np.array(sample).reshape(3, 64, 64)
-        self.scaler.fit(sample)
-        sample = self.scaler.transform(sample) # normalize between (-1, 1)
+        for i in range(3):
+            self.scaler.fit(sample[i,:,:])
+            sample[i,:,:] = self.scaler.transform(sample[i,:,:]) # normalize between (-1, 1)
         return sample
 
 transform = transforms.Compose([
