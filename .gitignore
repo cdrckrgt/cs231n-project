@@ -110,3 +110,4 @@ venv.bak/
 data/*
 # same for images
 images/*
+first_images/*
