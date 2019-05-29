@@ -26,7 +26,7 @@
 
 
 %%%%%%%%% TITLE
-\title{draw2pix: Generative Networks for Bad Artists}
+\title{draw2pix: Generative Adversarial Networks for Art School Rejects}
 
 \author{Cedrick Argueta\\
 Stanford University\\
@@ -60,7 +60,6 @@ We are essentially implementing the demo from \cite{pix2pix} with an unpaired da
 
 \section{Related Work}
 % TODO: gan, cogan citation
-describe some of these, how they relate \\
 The original Generative Adversarial Network (GAN) proposed by Goodfellow et al. \cite{gan}  proposes a network that learns an approximation of a distribution of data $p_{X}$.
 It does so by training two networks - a generator network and a discriminator network.
 These networks are trained adversarially, i.e. the discriminator's objective is to discern between real images and the generator's images, and the generator's objective is to generate images that fool the discriminator.
@@ -72,7 +71,7 @@ This can be used to generate pairs $x_1 \sim p_{X_1}, x_2 \sim p_{X_2}$ of image
 Zhu et al. \cite{cycleGAN} goes a step further by enforcing cycle consistency between pairs created, i.e. by ensuring that generated images can be run through another generator to create the paired image.
 CycleGAN effectively learns a mapping function $G : X \rightarrow Y$ for images in domains $X$ and $Y$.
 
-The networks discussed earlier are performing unsupervised iamge-to-image translation in that no labels are given to pair images from domain $X$ and domain $Y$ together.
+CycleGAN in particular does unsupervised image-to-image translation in that no labels are given to pair images from domain $X$ and domain $Y$ together.
 When these labels are given, supervised methods like those described by Isola et al. \cite{pix2pix} are possible through the use of conditional GANs.
 
 \section{Problem Statement}
@@ -133,19 +132,41 @@ Since these networks are coupled, i.e. they share parameters in the decoding sec
 For a given input $x$, we must find a noise vector $z^*$ such that $G_X(z^*) \approx x$.
 The corresponding image $y$ is then just $G_Y(z^*)$.
 
+% \begin{figure}
+%   \includegraphics[width=\linewidth]{loss.png}
+%   \caption{Discriminator and generator loss curves for our best model.}
+%   \label{cogan_loss}
+% \end{figure}
+
 At the moment, our baseline results are almost completely unsuccessful.
 While Zhu et al. \cite{cycleGAN} note that CoGAN was relatively unsuccessful at producing realistic mappings, our generators fail to capture any semblance of the target domain.
 We suspect that this is due to the lack of a large dataset, leading us to believe that we need data augmentation (rotations, jitter for the real photos, etc.).
+We may also augment our dataset with edge maps of other images of trees, giving us more variance and a larger dataset that would prove invaluable.
 We also underestimated the difficulty of training generative networks, where we found ourselves struggling with hyperparameters and tricks to get the loss values to converge.
-The loss functions for the generators and discriminators in our CoGAN approach can be seen in \ref{cogan_loss}.
+Oftentimes we find that either the generator or the discriminator will begin to dominate the other network early on in training, and finding the perfect balance of learning rates, ratio of number of updates, and architecture is extremely difficult.
+We realize that we will need much longer training times and a better strategy for encouraging the loss functions to converge.
+% The loss functions for the generators and discriminators in our CoGAN approach can be seen in \ref{cogan_loss}.
 
 The CoGAN model fails to produce images that can be recognized as realistic trees, with most images qualitatively looking like random noise.
-Some images of produces outputs at different epochs can be seen in \ref{cogan_pics}.
+Some images of produced outputs at different epochs can be seen in \ref{cogan_pics}.
 
-Despite this, we check out generated images using the Fr\'echet Inception Distance.
+\begin{figure}
+  \includegraphics[width=\linewidth]{../../first_images/100.png}
+  \includegraphics[width=\linewidth]{../../first_images/99000.png}
+  \caption{Generated images after 100 epochs and 99000 epochs.}
+  \label{cogan_pics}
+\end{figure}
+
+Despite these shortcomings, we check out generated images using the Fr\'echet Inception Distance.
+The Fr\'echet Inception Distance compares activation distributions of generated samples vs. real samples on the InceptionV3 network.
+For this metric, lower is better.
 Our generated images for sketches of trees received an FID score of 526.59 with our best model, while generated images for real trees received an FID score of 538.97.
 We hope to dramatically reduce these scores in the next few days, as we need a decent and functional baseline to even compare against CycleGAN on the same task.
-For perspective, other implementations of GANs trained on other datasets can achieve FID scores wel below 100, somtimes even below 20.
+For perspective, other implementations of GANs trained on other datasets can achieve FID scores well below 100, sometimes even below 20.
+
+Next, we will improve on our CoGAN implementation so that we will have a suitable baseline to compare CycleGAN to.
+Prior to this, however, we will need to address issues with our dataset, namely the lack of a large enough dataset to get a decent generative model.
+We will also implement CycleGAN, another network that can perform unpaired image-to-image translation, and compare the results to CoGAN and hopefully be able to use a hand-drawn sketch of a tree to create a photorealistic tree.
 {\small
 \bibliographystyle{ieee}
 \bibliography{ref}
