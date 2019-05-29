@@ -112,3 +112,4 @@ data/*
 images/*
 first_images/*
 src/weights/*
+logs/*
