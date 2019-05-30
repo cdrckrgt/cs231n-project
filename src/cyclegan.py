@@ -24,7 +24,7 @@ writer = SummaryWriter('../logs/{}'.format(run))
 
 img_shape = (64, 64, 3) # i think
 
-batch_size = 8
+batch_size = 16
 nb_training_iterations = 1000
 lr = 1e-3
 betas = (0.5, 0.999)
@@ -32,50 +32,17 @@ betas = (0.5, 0.999)
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 dtype = torch.cuda.FloatTensor if device == 'cuda' else torch.FloatTensor
 
-# load datasets
-class SketchyDataset(Dataset):
-    
-    def __init__(self, root_dir, transform=None):
-        self.root_dir = root_dir
-        self.image_names = os.listdir(self.root_dir)
-        self.transform = transform
-        self.scaler  = MinMaxScaler((-1, 1)) # used to not normalize
-
-    def __len__(self):
-        return len(self.image_names)
-
-    def __getitem__(self, idx):
-        image_path = self.root_dir + '/' + self.image_names[idx]
-        sample = Image.open(image_path)
-
-        if self.transform:
-            sample = self.transform(sample)
-
-        sample = np.array(sample).reshape(3, 64, 64)
-        for i in range(3):
-            self.scaler.fit(sample[i,:,:])
-            sample[i,:,:] = self.scaler.transform(sample[i,:,:]) # normalize between (-1, 1)
-        return sample
-
 transform = transforms.Compose([
-    transforms.Resize((64, 64)) # downsample the image, too large for efficient training
+    transforms.Resize((64, 64)), # downsample the image, too large for efficient training
+    transforms.ToTensor(),
+    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
 ])
 
-sketch_dataset = SketchyDataset(root_dir='../data/tree_sketches', transform=transform)
-photo_dataset = SketchyDataset(root_dir='../data/tree_photos', transform=transform)
+photo_data = datasets.ImageFolder('../data/sketchydata/photo/', transform)
+sketch_data = datasets.ImageFolder('../data/sketchydata/sketch/', transform)
 
-dataloader1 = torch.utils.data.DataLoader(
-    sketch_dataset,
-    batch_size=batch_size,
-    shuffle=True,
-)
-
-dataloader2 = torch.utils.data.DataLoader(
-    photo_dataset,
-    batch_size=batch_size,
-    shuffle=True,
-)
-
+photo_loader = DataLoader(dataset=photo_data, batch_size=batch_size, shuffle=True)
+sketch_loader = DataLoader(dataset=sketch_data, batch_size=batch_size, shuffle=False)
 
 # create cycle generator
 # encoder resnet decoder
@@ -193,15 +160,35 @@ def save_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, i):
     scipy.misc.imsave(path, merged)
     print('Saved {}'.format(path))
 
+from torch.autograd import Variable
+
+photo_iter = iter(photo_loader)
+sketch_iter = iter(sketch_loader)
+
+
 # monitoring batch
-monitor_X, monitor_Y = None, None
+monitor_X = Variable(photo_iter.next()[0])
+monitor_Y = Variable(sketch_iter.next()[0])
+
+iter_per_epoch = min(len(photo_iter), len(sketch_iter))
+
 
 for i in range(nb_training_iterations):
     # load real images minibatch
     # compute discriminator losses for both domains for real images
 
-    real_img_X, real_labels_X = None, None # get data
-    real_img_Y, real_labels_Y = None, None
+    # Reset data_iter for each epoch
+    if i % iter_per_epoch == 0:
+        photo_iter = iter(photo_loader)
+        sketch_iter = iter(sketch_loader)
+        photo_iter.next()
+        sketch_iter.next()
+
+    real_img_X, _ = photo_iter.next()
+    real_img_X = Variable(real_img_X)
+    
+    real_img_Y, _ = sketch_iter.next()
+    real_img_Y = Variable(real_img_Y)
 
     # generate fake images minibatch
     # compute discriminator losses for both domains for fake images
@@ -213,9 +200,9 @@ for i in range(nb_training_iterations):
 
     D_real_loss = D_X_real_loss + D_Y_real_loss
 
-    writer.add_scalar('D_real_loss', D_real_loss, global_step=i)
+    writer.add_scalar('D_real_loss', D_real_loss.item(), global_step=i)
 
-    D_real_loss.backwards()
+    D_real_loss.backward()
     D_opt.step()
 
     # generating fake images for X and Y
@@ -229,9 +216,9 @@ for i in range(nb_training_iterations):
 
     D_fake_loss = D_X_fake_loss + D_Y_fake_loss
 
-    writer.add_scalar('D_fake_loss', D_fake_loss, global_step=i)
+    writer.add_scalar('D_fake_loss', D_fake_loss.item(), global_step=i)
 
-    D_fake_loss.backwards()
+    D_fake_loss.backward()
     D_opt.step()
 
     # cycle consistency loss
@@ -251,9 +238,9 @@ for i in range(nb_training_iterations):
 
     G_Y_loss = G_YtoX_loss + G_YtoXtoY_loss
 
-    writer.add('G_Y_loss', G_Y_loss, global_step=i)
+    writer.add_scalar('G_Y_loss', G_Y_loss.item(), global_step=i)
 
-    G_Y_loss.backwards()
+    G_Y_loss.backward()
     G_opt.step()
     
     # cycle consistency loss
@@ -273,9 +260,9 @@ for i in range(nb_training_iterations):
 
     G_X_loss = G_XtoY_loss + G_XtoYtoX_loss
 
-    writer.add('G_X_loss', G_X_loss, global_step=i)
+    writer.add_scalar('G_X_loss', G_X_loss.item(), global_step=i)
 
-    G_X_loss.backwards()
+    G_X_loss.backward()
     G_opt.step()
 
     if i % 100 == 0:
