@@ -18,14 +18,16 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, Dataset
 
 # format is date.run_number this day
-run = '052819.01'
+run = '053019.02'
+if not os.path.exists('../saved_imgs/{}'.format(run)):
+    os.mkdir('../saved_imgs/{}'.format(run))
+if not os.path.exists('../weights/{}'.format(run)):
+    os.mkdir('../weights/{}'.format(run))
 
 writer = SummaryWriter('../logs/{}'.format(run))
 
-img_shape = (64, 64, 3) # i think
-
 batch_size = 16
-nb_training_iterations = 1000
+nb_training_iterations = 2000
 lr = 1e-3
 betas = (0.5, 0.999)
 
@@ -141,7 +143,7 @@ def merge_images(sources, targets):
         merged[:, i * h:(i + 1) * h, (j * 2 + 1) * h:(j * 2 + 2) * h] = t
     return merged.transpose(1, 2, 0)
 
-def save_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, i):
+def log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, i, save=False):
     fake_X = G_YtoX(monitor_Y)
     fake_Y = G_XtoY(monitor_X)
 
@@ -151,14 +153,18 @@ def save_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, i):
     fake_Y = fake_Y.cpu().data.numpy()
 
     merged = merge_images(X, fake_Y)
-    path = 'iter_{}-X-Y.png'.format(i)
-    scipy.misc.imsave(path, merged)
-    print('Saved {}'.format(path))
+    writer.add_image('X, generated Y', merged.transpose(2, 0, 1), global_step=i)
+    if save:
+        path = '../saved_imgs/{}/iter_{}-X-Y.png'.format(run, i)
+        scipy.misc.imsave(path, merged)
+        print('Saved {}'.format(path))
 
     merged = merge_images(Y, fake_X)
-    path = 'iter_{}-Y-X.png'.format(i)
-    scipy.misc.imsave(path, merged)
-    print('Saved {}'.format(path))
+    writer.add_image('Y, generated X', merged.transpose(2, 0, 1), global_step=i)
+    if save:
+        path = '../saved_imgs/{}/iter_{}-Y-X.png'.format(run, i)
+        scipy.misc.imsave(path, merged)
+        print('Saved {}'.format(path))
 
 from torch.autograd import Variable
 
@@ -167,27 +173,29 @@ sketch_iter = iter(sketch_loader)
 
 
 # monitoring batch
-monitor_X = Variable(photo_iter.next()[0])
-monitor_Y = Variable(sketch_iter.next()[0])
-
-iter_per_epoch = min(len(photo_iter), len(sketch_iter))
+monitor_X, _ = photo_iter.next()
+monitor_Y, _ = sketch_iter.next()
+monitor_X = Variable(monitor_X)
+monitor_Y = Variable(monitor_Y)
 
 
 for i in range(nb_training_iterations):
     # load real images minibatch
     # compute discriminator losses for both domains for real images
 
-    # Reset data_iter for each epoch
-    if i % iter_per_epoch == 0:
+    try :
+        real_img_X, _ = photo_iter.next()
+        real_img_Y, _ = sketch_iter.next()
+    except StopIteration:
         photo_iter = iter(photo_loader)
         sketch_iter = iter(sketch_loader)
         photo_iter.next()
         sketch_iter.next()
-
-    real_img_X, _ = photo_iter.next()
+        real_img_X, _ = photo_iter.next()
+        real_img_Y, _ = sketch_iter.next()
+        
     real_img_X = Variable(real_img_X)
     
-    real_img_Y, _ = sketch_iter.next()
     real_img_Y = Variable(real_img_Y)
 
     # generate fake images minibatch
@@ -267,17 +275,22 @@ for i in range(nb_training_iterations):
 
     if i % 100 == 0:
         print('iter: ', i)
-        print('D_real_loss: ', D_real_loss)
-        print('D_fake_loss: ', D_fake_loss)
-        print('G_X_loss: ', G_X_loss)
-        print('G_Y_loss: ', G_Y_loss)
-        save_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, i)
+        print('D_real_loss: ', D_real_loss.item())
+        print('D_fake_loss: ', D_fake_loss.item())
+        print('G_X_loss: ', G_X_loss.item())
+        print('G_Y_loss: ', G_Y_loss.item())
+        log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, i)
 
     # model checkpointing
     if i != 0 and i % 250 == 0:
-        torch.save(G_XtoY.state_dict(), '../weights/{}.G_XtoY.iter_{}.pt'.format(run, i))
-        torch.save(G_YtoX.state_dict(), '../weights/{}.G_YtoX.iter_{}.pt'.format(run, i))
-        torch.save(D_X.state_dict(), '../weights/{}.D_X.iter_{}.pt'.format(run, i))
-        torch.save(D_Y.state_dict(), '../weights/{}.D_Y.iter_{}.pt'.format(run, i))
+        torch.save(G_XtoY.state_dict(), '../weights/{0}/G_XtoY.iter_{1}.pt'.format(run, i))
+        torch.save(G_YtoX.state_dict(), '../weights/{0}/G_YtoX.iter_{1}.pt'.format(run, i))
+        torch.save(D_X.state_dict(), '../weights/{0}/D_X.iter_{1}.pt'.format(run, i))
+        torch.save(D_Y.state_dict(), '../weights/{0}/D_Y.iter_{1}.pt'.format(run, i))
+        log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, i, save=True)
 
-    
+torch.save(G_XtoY.state_dict(), '../weights/{0}/G_XtoY.pt'.format(run))
+torch.save(G_YtoX.state_dict(), '../weights/{0}/G_YtoX.pt'.format(run))
+torch.save(D_X.state_dict(), '../weights/{0}/D_X.pt'.format(run))
+torch.save(D_Y.state_dict(), '../weights/{0}/D_Y.pt'.format(run))
+

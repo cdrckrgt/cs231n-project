@@ -113,3 +113,6 @@ images/*
 first_images/*
 src/weights/*
 logs/*
+old/*
+saved_imgs/*
+weights/*
