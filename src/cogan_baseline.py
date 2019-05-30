@@ -18,13 +18,13 @@ import torch.nn.functional as F
 import torch
 
 
-nb_epochs = 1000
+nb_epochs = 25
 # batch_size needs to evenly divide size of dataset, or we get shape issues later on
 batch_size = 20 # weird
 lr = 1e-3
 b1 = 0.5
 b2 = 0.999
-latent_dim = 50 # used to be 100
+latent_dim = 25 # used to be 100
 sample_interval = 100
 
 # Configure data loader
@@ -180,15 +180,18 @@ coupled_generators.apply(weights_init_normal)
 coupled_discriminators.apply(weights_init_normal)
 
 # Optimizers
-optimizer_G = torch.optim.Adam(coupled_generators.parameters(), lr=lr, betas=(b1, b2))
+optimizer_G = torch.optim.Adam(coupled_generators.parameters(), lr=1e-3, betas=(b1, b2))
 # discriminator lr set to 0.05 generator lr, prevent overpowering
-optimizer_D = torch.optim.Adam(coupled_discriminators.parameters(), lr=lr, betas=(b1, b2))
+optimizer_D = torch.optim.Adam(coupled_discriminators.parameters(), lr=1e-4, betas=(b1, b2))
 
 Tensor = torch.cuda.FloatTensor if device == 'cuda' else torch.FloatTensor
 
 # ----------
 #  Training
 # ----------
+
+g_loss_ = []
+d_loss_ = []
 
 for epoch in range(nb_epochs):
     for i, (imgs1, imgs2) in enumerate(zip(dataloader1, dataloader2)):
@@ -207,25 +210,27 @@ for epoch in range(nb_epochs):
         #  Train Generators
         # ------------------
 
-        optimizer_G.zero_grad()
+        for _ in range(100):
 
-        # Sample noise as generator input
-        z = Variable(Tensor(np.random.normal(0, 1, (batch_size, latent_dim))))
+            optimizer_G.zero_grad()
 
-        # Generate a batch of images
-        gen_imgs1, gen_imgs2 = coupled_generators(z)
-        # Determine validity of generated images
-        validity1, validity2 = coupled_discriminators(gen_imgs1, gen_imgs2)
+            # Sample noise as generator input
+            z = Variable(Tensor(np.random.normal(0, 1, (batch_size, latent_dim))))
 
-        g_loss = (adversarial_loss(validity1, valid) + adversarial_loss(validity2, valid)) / 2
+            # Generate a batch of images
+            gen_imgs1, gen_imgs2 = coupled_generators(z)
+            # Determine validity of generated images
+            validity1, validity2 = coupled_discriminators(gen_imgs1, gen_imgs2)
 
-        g_loss.backward()
-        optimizer_G.step()
+            g_loss = (adversarial_loss(validity1, valid) + adversarial_loss(validity2, valid)) / 2
+
+            g_loss_.append(g_loss.item())
+            g_loss.backward()
+            optimizer_G.step()
 
         # ----------------------
         #  Train Discriminators
-        # ----------------------
-
+    # ----------------------
         optimizer_D.zero_grad()
 
         # Determine validity of real and generated images
@@ -239,6 +244,7 @@ for epoch in range(nb_epochs):
             + adversarial_loss(validity2_fake, fake)
         ) / 4
 
+        d_loss_.append(d_loss.item())
         d_loss.backward()
         optimizer_D.step()
 
@@ -256,4 +262,10 @@ for epoch in range(nb_epochs):
 # this for inception score
 # https://github.com/sbarratt/inception-score-pytorch/blob/master/inception_score.py
 
-torch.save(coupled_generators.state_dict(), 'weights/generator_weights_03.pt')
+torch.save(coupled_generators.state_dict(), 'weights/generator_weights_05.pt')
+
+with open('losses.txt', 'w+') as f:
+    f.write('g loss\n')
+    f.write(', '.join(str(g_loss_)))
+    f.write('d loss\n')
+    f.write(', '.join(str(d_loss_)))
