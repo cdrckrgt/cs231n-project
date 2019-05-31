@@ -18,7 +18,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, Dataset
 
 # format is date.run_number this day
-run = '053019.06'
+run = '053019.08'
 if not os.path.exists('../saved_imgs/{}'.format(run)):
     os.mkdir('../saved_imgs/{}'.format(run))
 if not os.path.exists('../weights/{}'.format(run)):
@@ -27,7 +27,7 @@ if not os.path.exists('../weights/{}'.format(run)):
 writer = SummaryWriter('../logs/{}'.format(run))
 
 batch_size = 64
-nb_training_iterations = 4000
+nb_training_iterations = 10000
 lr = 1e-4
 betas = (0.5, 0.999)
 
@@ -35,7 +35,7 @@ device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cp
 dtype = torch.cuda.FloatTensor if device == 'cuda' else torch.FloatTensor
 
 transform = transforms.Compose([
-    transforms.Resize((64, 64)), # downsample the image, too large for efficient training
+    transforms.Resize((256, 256)), # downsample the image, too large for efficient training
     transforms.ToTensor(),
     # transforms.Normalize((0, 0, 0), (0.3, 0.3, 0.3))
 ])
@@ -44,7 +44,7 @@ photo_data = datasets.ImageFolder('../data/sketchydata/photo/', transform)
 sketch_data = datasets.ImageFolder('../data/sketchydata/sketch/', transform)
 
 photo_loader = DataLoader(dataset=photo_data, batch_size=batch_size, shuffle=True)
-sketch_loader = DataLoader(dataset=sketch_data, batch_size=batch_size, shuffle=False)
+sketch_loader = DataLoader(dataset=sketch_data, batch_size=batch_size, shuffle=True)
 
 # create cycle generator
 # encoder resnet decoder
@@ -82,16 +82,28 @@ class Generator(nn.Module):
         self.act5 = nn.LeakyReLU(0.2)
         self.resnet3 = ResnetBlock(128)
         self.act6 = nn.LeakyReLU(0.2)
+        self.resnet4 = ResnetBlock(128)
+        self.act7 = nn.LeakyReLU(0.2)
+        self.resnet5 = ResnetBlock(128)
+        self.act8 = nn.LeakyReLU(0.2)
+        self.resnet6 = ResnetBlock(128)
+        self.act9 = nn.LeakyReLU(0.2)
+        self.resnet7 = ResnetBlock(128)
+        self.act10 = nn.LeakyReLU(0.2)
+        self.resnet8 = ResnetBlock(128)
+        self.act11 = nn.LeakyReLU(0.2)
+        self.resnet9 = ResnetBlock(128)
+        self.act12 = nn.LeakyReLU(0.2)
 
         # decoder
         self.convT1 = nn.ConvTranspose2d(128, 64, 4, 2, 1)
         self.bn4 = nn.BatchNorm2d(64)
-        self.act7 = nn.LeakyReLU(0.2)
+        self.act13 = nn.LeakyReLU(0.2)
         self.convT2 = nn.ConvTranspose2d(64, 32, 4, 2, 1)
         self.bn5 = nn.BatchNorm2d(32)
-        self.act8 = nn.LeakyRelu(0.2)
+        self.act14 = nn.LeakyReLU(0.2)
         self.convT3 = nn.ConvTranspose2d(32, 3, 4, 2, 1)
-        self.act9 = nn.Tanh()
+        self.act15 = nn.Tanh()
 
     def forward(self, x):
         # encoder
@@ -102,10 +114,16 @@ class Generator(nn.Module):
         out = self.act4(self.resnet1(out))
         out = self.act5(self.resnet2(out))
         out = self.act6(self.resnet3(out))
+        out = self.act7(self.resnet4(out))
+        out = self.act8(self.resnet5(out))
+        out = self.act9(self.resnet6(out))
+        out = self.act10(self.resnet7(out))
+        out = self.act11(self.resnet8(out))
+        out = self.act12(self.resnet9(out))
         # decoder
-        out = self.act7(self.bn4(self.convT1(out)))
-        out = self.act8(self.bn5(self.convT2(out)))
-        out = self.act9(self.convT3(out))
+        out = self.act13(self.bn4(self.convT1(out)))
+        out = self.act14(self.bn5(self.convT2(out)))
+        out = self.act15(self.convT3(out))
         return out
 
 
@@ -234,6 +252,8 @@ for i in range(nb_training_iterations):
     # cyclegan implementation does this to slow learning rate of D
     D_real_loss /= 2
 
+    writer.add_scalar('D_X_real_loss', D_X_real_loss.item(), global_step=i)
+    writer.add_scalar('D_Y_real_loss', D_Y_real_loss.item(), global_step=i)
     writer.add_scalar('D_real_loss', D_real_loss.item(), global_step=i)
 
     D_real_loss.backward()
@@ -249,8 +269,12 @@ for i in range(nb_training_iterations):
     D_Y_fake_loss = torch.sum(torch.pow(D_Y(fake_img_Y), 2)) / batch_size
 
     D_fake_loss = D_X_fake_loss + D_Y_fake_loss
+
+    # cyclegan implementation does this to slow learning rate of D
     D_fake_loss /= 2
 
+    writer.add_scalar('D_X_fake_loss', D_X_fake_loss.item(), global_step=i)
+    writer.add_scalar('D_Y_fake_loss', D_Y_fake_loss.item(), global_step=i)
     writer.add_scalar('D_fake_loss', D_fake_loss.item(), global_step=i)
 
     D_fake_loss.backward()
