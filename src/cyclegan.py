@@ -18,7 +18,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, Dataset
 
 # format is date.run_number this day
-run = '053119.run01'
+run = '053119.run02'
 if not os.path.exists('../saved_imgs/{}'.format(run)):
     os.mkdir('../saved_imgs/{}'.format(run))
 if not os.path.exists('../weights/{}'.format(run)):
@@ -28,7 +28,7 @@ writer = SummaryWriter('../logs/{}'.format(run))
 
 batch_size = 64
 nb_training_iterations = 5000
-lr = 1e-4
+lr = 2.5e-4
 betas = (0.5, 0.999)
 len_history = 50
 use_label_smoothing = True
@@ -145,9 +145,9 @@ class Discriminator(nn.Module):
         self.conv3 = nn.Conv2d(128, 256, 4, 2, 1)
         self.bn3 = nn.BatchNorm2d(256)
         self.act3 = nn.LeakyReLU(0.2)
-        self.conv4 = nn.Conv2d(256, 256, 3, 1, 1)
-        self.bn4 = nn.BatchNorm2d(256)
-        self.act4 = nn.LeakyReLU(0.2)
+        # self.conv4 = nn.Conv2d(256, 256, 3, 1, 1)
+        # self.bn4 = nn.BatchNorm2d(256)
+        # self.act4 = nn.LeakyReLU(0.2)
 
         self.conv5 = nn.Conv2d(256, 1, 32, 1, 0)
         self.act5 = nn.Sigmoid()
@@ -156,7 +156,7 @@ class Discriminator(nn.Module):
         out = self.act1(self.bn1(self.conv1(x))) 
         out = self.act2(self.bn2(self.conv2(out)))
         out = self.act3(self.bn3(self.conv3(out)))
-        out = self.act4(self.bn4(self.conv4(out)))
+        # out = self.act4(self.bn4(self.conv4(out)))
         out = self.conv5(out).squeeze().unsqueeze(1)
         out = self.act5(out)
         return out
@@ -338,6 +338,9 @@ for i in range(nb_training_iterations):
     D_fake_loss.backward()
     D_opt.step()
 
+    D_loss = D_real_loss + D_fake_loss
+    writer.add_scalar('D_loss', D_loss.item(), global_step=i)
+
     '''
 
     if len(photo_history) == len_history:
@@ -400,6 +403,9 @@ for i in range(nb_training_iterations):
 
     G_X_loss.backward()
     G_opt.step()
+
+    G_loss = G_X_loss + G_Y_loss
+    writer.add_scalar('G_loss', G_loss.item(), global_step=i)
 
     if i % 100 == 0:
         print('iter: ', i)
