@@ -18,8 +18,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, Dataset
 
 # format is date.run_number this day
-run = '053019.08'
-run = 'test'
+run = '053119.run01'
 if not os.path.exists('../saved_imgs/{}'.format(run)):
     os.mkdir('../saved_imgs/{}'.format(run))
 if not os.path.exists('../weights/{}'.format(run)):
@@ -28,10 +27,12 @@ if not os.path.exists('../weights/{}'.format(run)):
 writer = SummaryWriter('../logs/{}'.format(run))
 
 batch_size = 64
-nb_training_iterations = 1000
+nb_training_iterations = 5000
 lr = 1e-4
 betas = (0.5, 0.999)
 len_history = 50
+use_label_smoothing = True
+lambda_ = 10
 assert len_history > batch_size / 2, 'need length of history to be at least half batch size for replacement in discriminator update'
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
@@ -47,7 +48,7 @@ photo_data = datasets.ImageFolder('../data/sketchydata/photo/', transform)
 sketch_data = datasets.ImageFolder('../data/sketchydata/sketch/', transform)
 
 photo_loader = DataLoader(dataset=photo_data, batch_size=batch_size, shuffle=True)
-sketch_loader = DataLoader(dataset=sketch_data, batch_size=batch_size, shuffle=True)
+sketch_loader = DataLoader(dataset=sketch_data, batch_size=batch_size, shuffle=False)
 
 # create cycle generator
 # encoder resnet decoder
@@ -85,18 +86,18 @@ class Generator(nn.Module):
         self.act5 = nn.LeakyReLU(0.2)
         self.resnet3 = ResnetBlock(128)
         self.act6 = nn.LeakyReLU(0.2)
-        self.resnet4 = ResnetBlock(128)
-        self.act7 = nn.LeakyReLU(0.2)
-        self.resnet5 = ResnetBlock(128)
-        self.act8 = nn.LeakyReLU(0.2)
-        self.resnet6 = ResnetBlock(128)
-        self.act9 = nn.LeakyReLU(0.2)
-        self.resnet7 = ResnetBlock(128)
-        self.act10 = nn.LeakyReLU(0.2)
-        self.resnet8 = ResnetBlock(128)
-        self.act11 = nn.LeakyReLU(0.2)
-        self.resnet9 = ResnetBlock(128)
-        self.act12 = nn.LeakyReLU(0.2)
+        # self.resnet4 = ResnetBlock(128)
+        # self.act7 = nn.LeakyReLU(0.2)
+        # self.resnet5 = ResnetBlock(128)
+        # self.act8 = nn.LeakyReLU(0.2)
+        # self.resnet6 = ResnetBlock(128)
+        # self.act9 = nn.LeakyReLU(0.2)
+        # self.resnet7 = ResnetBlock(128)
+        # self.act10 = nn.LeakyReLU(0.2)
+        # self.resnet8 = ResnetBlock(128)
+        # self.act11 = nn.LeakyReLU(0.2)
+        # self.resnet9 = ResnetBlock(128)
+        # self.act12 = nn.LeakyReLU(0.2)
 
         # decoder
         self.convT1 = nn.ConvTranspose2d(128, 64, 4, 2, 1)
@@ -117,12 +118,12 @@ class Generator(nn.Module):
         out = self.act4(self.resnet1(out))
         out = self.act5(self.resnet2(out))
         out = self.act6(self.resnet3(out))
-        out = self.act7(self.resnet4(out))
-        out = self.act8(self.resnet5(out))
-        out = self.act9(self.resnet6(out))
-        out = self.act10(self.resnet7(out))
-        out = self.act11(self.resnet8(out))
-        out = self.act12(self.resnet9(out))
+        # out = self.act7(self.resnet4(out))
+        # out = self.act8(self.resnet5(out))
+        # out = self.act9(self.resnet6(out))
+        # out = self.act10(self.resnet7(out))
+        # out = self.act11(self.resnet8(out))
+        # out = self.act12(self.resnet9(out))
         # decoder
         out = self.act13(self.bn4(self.convT1(out)))
         out = self.act14(self.bn5(self.convT2(out)))
@@ -135,24 +136,29 @@ class Generator(nn.Module):
 class Discriminator(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = nn.Conv2d(3, 32, 4, 2, 1)
-        self.bn1 = nn.BatchNorm2d(32)
+        self.conv1 = nn.Conv2d(3, 64, 4, 2, 1)
+        self.bn1 = nn.BatchNorm2d(64)
         self.act1 = nn.LeakyReLU(0.2)
-        self.conv2 = nn.Conv2d(32, 64, 4, 2, 1)
-        self.bn2 = nn.BatchNorm2d(64)
+        self.conv2 = nn.Conv2d(64, 128, 4, 2, 1)
+        self.bn2 = nn.BatchNorm2d(128)
         self.act2 = nn.LeakyReLU(0.2)
-        self.conv3 = nn.Conv2d(64, 128, 4, 2, 1)
-        self.bn3 = nn.BatchNorm2d(128)
+        self.conv3 = nn.Conv2d(128, 256, 4, 2, 1)
+        self.bn3 = nn.BatchNorm2d(256)
         self.act3 = nn.LeakyReLU(0.2)
+        self.conv4 = nn.Conv2d(256, 256, 3, 1, 1)
+        self.bn4 = nn.BatchNorm2d(256)
+        self.act4 = nn.LeakyReLU(0.2)
 
-        self.conv4 = nn.Conv2d(128, 1, 4, 2, 0)
-        self.act4 = nn.Sigmoid()
+        self.conv5 = nn.Conv2d(256, 1, 32, 1, 0)
+        self.act5 = nn.Sigmoid()
 
     def forward(self, x):
-        out = self.act1(self.bn1(self.conv1(x)))
+        out = self.act1(self.bn1(self.conv1(x))) 
         out = self.act2(self.bn2(self.conv2(out)))
         out = self.act3(self.bn3(self.conv3(out)))
-        out = self.act4(self.conv4(out).squeeze())
+        out = self.act4(self.bn4(self.conv4(out)))
+        out = self.conv5(out).squeeze().unsqueeze(1)
+        out = self.act5(out)
         return out
 
 # create generators and discriminators
@@ -222,9 +228,11 @@ monitor_Y, _ = sketch_iter.next()
 monitor_X = monitor_X.to(device)
 monitor_Y = monitor_Y.to(device)
 
-
+'''
 photo_history = []
 sketch_history = []
+'''
+
 
 for i in range(nb_training_iterations):
     # load real images minibatch
@@ -242,7 +250,7 @@ for i in range(nb_training_iterations):
         real_img_Y, _ = sketch_iter.next()
  
     real_img_X = real_img_X.to(device)
-    
+
     real_img_Y = real_img_Y.to(device)
 
     # generate fake images minibatch
@@ -250,8 +258,16 @@ for i in range(nb_training_iterations):
 
     # real loss
     D_opt.zero_grad()
-    D_X_real_loss = torch.sum(torch.pow(D_X(real_img_X) - 1, 2)) / batch_size
-    D_Y_real_loss = torch.sum(torch.pow(D_Y(real_img_Y) - 1, 2)) / batch_size
+
+    # label smoothing
+    true_label_X = 1
+    true_label_Y = 1
+    if use_label_smoothing:
+        true_label_X = torch.tensor(np.random.uniform(low=0.7, high=1.2, size=(real_img_X.shape[0], 1))).to(device).float()
+        true_label_Y = torch.tensor(np.random.uniform(low=0.7, high=1.2, size=(real_img_Y.shape[0], 1))).to(device).float()
+
+    D_X_real_loss = torch.sum(torch.pow(D_X(real_img_X) - true_label_X, 2)) / batch_size
+    D_Y_real_loss = torch.sum(torch.pow(D_Y(real_img_Y) - true_label_Y, 2)) / batch_size
 
     D_real_loss = D_X_real_loss + D_Y_real_loss
 
@@ -265,13 +281,11 @@ for i in range(nb_training_iterations):
     D_real_loss.backward()
     D_opt.step()
 
-    torch.autograd.set_detect_anomaly(True)
-
     # generating fake images for X and Y
     fake_img_X = G_YtoX(real_img_Y) # 64 x 3 x 256 x 256
     fake_img_Y = G_XtoY(real_img_X)
 
-
+    '''
 
     # updating generated buffer
     if len(photo_history) < len_history:
@@ -284,7 +298,7 @@ for i in range(nb_training_iterations):
         # sample half batch size, replace in fake_img_x
         indices = np.random.choice(len_history, int(batch_size / 2), replace=False)
         old_X_hist = torch.stack([photo_history[idx] for idx in indices])
-        fake_img_X = torch.cat((fake_img_X[int(batch_size / 2):, :, :, :], old_X_hist), 0)
+        new_fake_img_X = torch.cat((fake_img_X[int(batch_size / 2):, :, :, :], old_X_hist), 0)
 
     # updating generated buffer
     if len(sketch_history) < len_history:
@@ -297,12 +311,20 @@ for i in range(nb_training_iterations):
         # sample half batch size, replace in fake_img_x
         indices = np.random.choice(len_history, int(batch_size / 2), replace=False)
         old_Y_hist = torch.stack([sketch_history[idx] for idx in indices])
-        fake_img_Y = torch.cat((fake_img_Y[int(batch_size / 2):, :, :, :], old_Y_hist), 0)
+        new_fake_img_Y = torch.cat((fake_img_Y[int(batch_size / 2):, :, :, :], old_Y_hist), 0)
+
+    '''
 
     # fake loss
+    fake_label_X = 0
+    fake_label_Y = 0
+    if use_label_smoothing:
+        fake_label_X = torch.tensor(np.random.uniform(low=0.0, high=0.3, size=(fake_img_X.shape[0], 1))).to(device).float()
+        fake_label_Y = torch.tensor(np.random.uniform(low=0.0, high=0.3, size=(fake_img_Y.shape[0], 1))).to(device).float()
+
     D_opt.zero_grad()
-    D_X_fake_loss = torch.sum(torch.pow(D_X(fake_img_X), 2)) / batch_size
-    D_Y_fake_loss = torch.sum(torch.pow(D_Y(fake_img_Y), 2)) / batch_size
+    D_X_fake_loss = torch.sum(torch.pow(D_X(fake_img_X) - fake_label_X, 2)) / batch_size
+    D_Y_fake_loss = torch.sum(torch.pow(D_Y(fake_img_Y) - fake_label_Y, 2)) / batch_size
 
     D_fake_loss = D_X_fake_loss + D_Y_fake_loss
 
@@ -316,17 +338,20 @@ for i in range(nb_training_iterations):
     D_fake_loss.backward()
     D_opt.step()
 
+    '''
+
     if len(photo_history) == len_history:
         # select half to be replaced
         indices = np.random.choice(len_history, int(batch_size / 2), replace=False)
         for half_idx, idx in enumerate(indices):
             photo_history[idx] = fake_img_X[half_idx, :, :, :]
-        
+ 
     if len(sketch_history) == len_history:
         # select half to be replaced
         indices = np.random.choice(len_history, int(batch_size / 2), replace=False)
         for half_idx, idx in enumerate(indices):
             sketch_history[idx] = fake_img_Y[half_idx, :, :, :]
+    '''
 
     # cycle consistency loss
     G_opt.zero_grad()
@@ -335,7 +360,7 @@ for i in range(nb_training_iterations):
     fake_img_X = G_YtoX(real_img_Y)
 
     # generator loss
-    G_YtoX_loss = torch.sum(torch.pow(D_X(fake_img_X) - 1, 2)) / batch_size
+    G_YtoX_loss = torch.sum(torch.pow(D_X(fake_img_X) - true_label_Y, 2)) / batch_size
 
     # reconstruct Y
     reconstructed_Y = G_XtoY(fake_img_X)
@@ -343,7 +368,7 @@ for i in range(nb_training_iterations):
     # cycle consistency loss
     G_YtoXtoY_loss = torch.sum(torch.pow(real_img_Y - reconstructed_Y, 2)) / batch_size
 
-    G_Y_loss = G_YtoX_loss + G_YtoXtoY_loss
+    G_Y_loss = G_YtoX_loss + lambda_ * G_YtoXtoY_loss
 
     writer.add_scalar('G_YtoX_loss', G_YtoX_loss.item(), global_step=i)
     writer.add_scalar('G_YtoXtoY_loss', G_YtoXtoY_loss.item(), global_step=i)
@@ -359,7 +384,7 @@ for i in range(nb_training_iterations):
     fake_img_Y = G_XtoY(real_img_X)
 
     # generator loss
-    G_XtoY_loss = torch.sum(torch.pow(D_Y(fake_img_Y) - 1, 2)) / batch_size
+    G_XtoY_loss = torch.sum(torch.pow(D_Y(fake_img_Y) - true_label_X, 2)) / batch_size
 
     # reconstruct X
     reconstructed_X = G_YtoX(fake_img_Y)
@@ -367,7 +392,7 @@ for i in range(nb_training_iterations):
     # cycle consistency loss
     G_XtoYtoX_loss = torch.sum(torch.pow(real_img_X - reconstructed_X, 2)) / batch_size
 
-    G_X_loss = G_XtoY_loss + G_XtoYtoX_loss
+    G_X_loss = G_XtoY_loss + lambda_ * G_XtoYtoX_loss
 
     writer.add_scalar('G_XtoY_loss', G_XtoY_loss.item(), global_step=i)
     writer.add_scalar('G_XtoYtoX_loss', G_XtoYtoX_loss.item(), global_step=i)
