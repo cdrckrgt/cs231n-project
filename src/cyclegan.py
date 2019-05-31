@@ -19,6 +19,7 @@ from torch.utils.data import DataLoader, Dataset
 
 # format is date.run_number this day
 run = '053019.08'
+run = 'test'
 if not os.path.exists('../saved_imgs/{}'.format(run)):
     os.mkdir('../saved_imgs/{}'.format(run))
 if not os.path.exists('../weights/{}'.format(run)):
@@ -27,9 +28,10 @@ if not os.path.exists('../weights/{}'.format(run)):
 writer = SummaryWriter('../logs/{}'.format(run))
 
 batch_size = 64
-nb_training_iterations = 10000
+nb_training_iterations = 1000
 lr = 1e-4
 betas = (0.5, 0.999)
+len_history = 50
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 dtype = torch.cuda.FloatTensor if device == 'cuda' else torch.FloatTensor
@@ -220,6 +222,9 @@ monitor_X = Variable(monitor_X).to(device)
 monitor_Y = Variable(monitor_Y).to(device)
 
 
+photo_history = []
+sketch_history = []
+
 for i in range(nb_training_iterations):
     # load real images minibatch
     # compute discriminator losses for both domains for real images
@@ -260,8 +265,25 @@ for i in range(nb_training_iterations):
     D_opt.step()
 
     # generating fake images for X and Y
-    fake_img_X = G_YtoX(real_img_Y)
+    fake_img_X = G_YtoX(real_img_Y) # 64 x 3 x 256 x 256
     fake_img_Y = G_XtoY(real_img_X)
+
+
+
+    # updating generated buffer
+    if len(photo_history) < len_history:
+        # just add to buffer
+        nb_added = 0
+        while len(photo_history) < len_history and nb_added < batch_size:
+            photo_history.append(fake_img_X[nb_added, :, :, :])
+            nb_added += 1
+    if len(photo_history) == len_history:
+        # sample half batch size, replace in fake_img_x
+        indices = np.random.choice(len_history, int(batch_size / 2), replace=False)
+        old_half_batch_hist = torch.stack([photo_history[idx] for idx in indices])
+        new_half_batch_hist = fake_img_X[indices]
+        fake_img_X[indices] = old_half_batch_hist
+
 
     # fake loss
     D_opt.zero_grad()
@@ -280,6 +302,13 @@ for i in range(nb_training_iterations):
     D_fake_loss.backward()
     D_opt.step()
 
+    if len(photo_history) == len_history:
+        # select half to be replaced
+        indices = np.random.choice(len_history, int(batch_size / 2), replace=False)
+        for half_idx, idx in enumerate(indices):
+            photo_history[idx] = new_half_batch_hist[half_idx, :, :, :]
+        
+
     # cycle consistency loss
     G_opt.zero_grad()
         
@@ -297,6 +326,8 @@ for i in range(nb_training_iterations):
 
     G_Y_loss = G_YtoX_loss + G_YtoXtoY_loss
 
+    writer.add_scalar('G_YtoX_loss', G_YtoX_loss.item(), global_step=i)
+    writer.add_scalar('G_YtoXtoY_loss', G_YtoXtoY_loss.item(), global_step=i)
     writer.add_scalar('G_Y_loss', G_Y_loss.item(), global_step=i)
 
     G_Y_loss.backward()
@@ -319,6 +350,8 @@ for i in range(nb_training_iterations):
 
     G_X_loss = G_XtoY_loss + G_XtoYtoX_loss
 
+    writer.add_scalar('G_XtoY_loss', G_XtoY_loss.item(), global_step=i)
+    writer.add_scalar('G_XtoYtoX_loss', G_XtoYtoX_loss.item(), global_step=i)
     writer.add_scalar('G_X_loss', G_X_loss.item(), global_step=i)
 
     G_X_loss.backward()
