@@ -280,10 +280,23 @@ for i in range(nb_training_iterations):
     if len(photo_history) == len_history:
         # sample half batch size, replace in fake_img_x
         indices = np.random.choice(len_history, int(batch_size / 2), replace=False)
-        old_half_batch_hist = torch.stack([photo_history[idx] for idx in indices])
-        new_half_batch_hist = fake_img_X[indices]
-        fake_img_X[indices] = old_half_batch_hist
+        old_X_hist = torch.stack([photo_history[idx] for idx in indices])
+        new_Y_hist = fake_img_X[indices]
+        fake_img_X[indices] = old_X_hist
 
+    # updating generated buffer
+    if len(sketch_history) < len_history:
+        # just add to buffer
+        nb_added = 0
+        while len(sketch_history) < len_history and nb_added < batch_size:
+            sketch_history.append(fake_img_Y[nb_added, :, :, :])
+            nb_added += 1
+    if len(sketch_history) == len_history:
+        # sample half batch size, replace in fake_img_x
+        indices = np.random.choice(len_history, int(batch_size / 2), replace=False)
+        old_Y_hist = torch.stack([sketch_history[idx] for idx in indices])
+        new_Y_hist = fake_img_Y[indices]
+        fake_img_Y[indices] = old_Y_hist
 
     # fake loss
     D_opt.zero_grad()
@@ -306,8 +319,13 @@ for i in range(nb_training_iterations):
         # select half to be replaced
         indices = np.random.choice(len_history, int(batch_size / 2), replace=False)
         for half_idx, idx in enumerate(indices):
-            photo_history[idx] = new_half_batch_hist[half_idx, :, :, :]
+            photo_history[idx] = new_X_hist[half_idx, :, :, :]
         
+    if len(sketch_history) == len_history:
+        # select half to be replaced
+        indices = np.random.choice(len_history, int(batch_size / 2), replace=False)
+        for half_idx, idx in enumerate(indices):
+            sketch_history[idx] = new_Y_hist[half_idx, :, :, :]
 
     # cycle consistency loss
     G_opt.zero_grad()
