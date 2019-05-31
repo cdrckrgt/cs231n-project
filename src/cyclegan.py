@@ -32,6 +32,7 @@ nb_training_iterations = 1000
 lr = 1e-4
 betas = (0.5, 0.999)
 len_history = 50
+assert len_history > batch_size / 2, 'need length of history to be at least half batch size for replacement in discriminator update'
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 dtype = torch.cuda.FloatTensor if device == 'cuda' else torch.FloatTensor
@@ -218,8 +219,8 @@ sketch_iter = iter(sketch_loader)
 # monitoring batch
 monitor_X, _ = photo_iter.next()
 monitor_Y, _ = sketch_iter.next()
-monitor_X = Variable(monitor_X).to(device)
-monitor_Y = Variable(monitor_Y).to(device)
+monitor_X = monitor_X.to(device)
+monitor_Y = monitor_Y.to(device)
 
 
 photo_history = []
@@ -239,10 +240,10 @@ for i in range(nb_training_iterations):
         sketch_iter.next()
         real_img_X, _ = photo_iter.next()
         real_img_Y, _ = sketch_iter.next()
-        
-    real_img_X = Variable(real_img_X).to(device)
+ 
+    real_img_X = real_img_X.to(device)
     
-    real_img_Y = Variable(real_img_Y).to(device)
+    real_img_Y = real_img_Y.to(device)
 
     # generate fake images minibatch
     # compute discriminator losses for both domains for fake images
@@ -264,6 +265,8 @@ for i in range(nb_training_iterations):
     D_real_loss.backward()
     D_opt.step()
 
+    torch.autograd.set_detect_anomaly(True)
+
     # generating fake images for X and Y
     fake_img_X = G_YtoX(real_img_Y) # 64 x 3 x 256 x 256
     fake_img_Y = G_XtoY(real_img_X)
@@ -281,8 +284,7 @@ for i in range(nb_training_iterations):
         # sample half batch size, replace in fake_img_x
         indices = np.random.choice(len_history, int(batch_size / 2), replace=False)
         old_X_hist = torch.stack([photo_history[idx] for idx in indices])
-        new_Y_hist = fake_img_X[indices]
-        fake_img_X[indices] = old_X_hist
+        fake_img_X = torch.cat((fake_img_X[int(batch_size / 2):, :, :, :], old_X_hist), 0)
 
     # updating generated buffer
     if len(sketch_history) < len_history:
@@ -295,8 +297,7 @@ for i in range(nb_training_iterations):
         # sample half batch size, replace in fake_img_x
         indices = np.random.choice(len_history, int(batch_size / 2), replace=False)
         old_Y_hist = torch.stack([sketch_history[idx] for idx in indices])
-        new_Y_hist = fake_img_Y[indices]
-        fake_img_Y[indices] = old_Y_hist
+        fake_img_Y = torch.cat((fake_img_Y[int(batch_size / 2):, :, :, :], old_Y_hist), 0)
 
     # fake loss
     D_opt.zero_grad()
@@ -319,13 +320,13 @@ for i in range(nb_training_iterations):
         # select half to be replaced
         indices = np.random.choice(len_history, int(batch_size / 2), replace=False)
         for half_idx, idx in enumerate(indices):
-            photo_history[idx] = new_X_hist[half_idx, :, :, :]
+            photo_history[idx] = fake_img_X[half_idx, :, :, :]
         
     if len(sketch_history) == len_history:
         # select half to be replaced
         indices = np.random.choice(len_history, int(batch_size / 2), replace=False)
         for half_idx, idx in enumerate(indices):
-            sketch_history[idx] = new_Y_hist[half_idx, :, :, :]
+            sketch_history[idx] = fake_img_Y[half_idx, :, :, :]
 
     # cycle consistency loss
     G_opt.zero_grad()
