@@ -30,7 +30,8 @@ from torch.utils.data import DataLoader, Dataset
 ################################################################################
 
 # format is date.run_number this day
-run = '053119.run07'
+run = '053119.run09'
+run = 'test'
 if not os.path.exists('../weights/{}'.format(run)):
     os.mkdir('../weights/{}'.format(run))
 if not os.path.exists('../logs/{}'.format(run)):
@@ -48,9 +49,11 @@ nb_epochs = 200
 lr = 2e-4
 betas = (0.5, 0.999)
 use_label_smoothing = True
-lambda_ = 10
-use_noisy_label = True
+lambda_ = 5
+use_noisy_labels = False
 noisy_p = 0.05
+should_halve_loss = True
+buffer_max_size = 50
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 dtype = torch.cuda.FloatTensor if device == 'cuda' else torch.FloatTensor
@@ -62,13 +65,16 @@ dtype = torch.cuda.FloatTensor if device == 'cuda' else torch.FloatTensor
 
 transform_sketch = transforms.Compose([
     transforms.Resize((256, 256)),
+    transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
+    transforms.Normalize((0.5,0.5,0.5), (0.5,0.5,0.5)),
 ])
 transform_photo = transforms.Compose([
     transforms.Resize((256, 256)),
     transforms.ColorJitter(hue=0.05, saturation=0.05, brightness=0.05),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
+    transforms.Normalize((0.5,0.5,0.5), (0.5,0.5,0.5)),
 ])
 
 photo_data = datasets.ImageFolder('../data/sketchydata/photo/', transform_photo)
@@ -104,11 +110,11 @@ class ResnetBlock(nn.Module):
     def __init__(self, dim):
         super().__init__()
         self.conv = nn.Conv2d(dim, dim, 3, 1, 1)
-        self.bn = nn.BatchNorm2d(dim)
+        self.norm = nn.InstanceNorm2d(dim)
         self.act = nn.LeakyReLU(0.2)
 
     def forward(self, x):
-        out = self.bn(self.conv(x))
+        out = self.norm(self.conv(x))
         out = out + x
         out = self.act(out)
         return out
@@ -119,13 +125,13 @@ class Generator(nn.Module):
        
         # encoder 
         self.conv1 = nn.Conv2d(3, 64, 4, 2, 1)
-        self.bn1 = nn.BatchNorm2d(64)
+        self.norm1 = nn.InstanceNorm2d(64)
         self.act1 = nn.LeakyReLU(0.2)
         self.conv2 = nn.Conv2d(64, 128, 4, 2, 1)
-        self.bn2 = nn.BatchNorm2d(128)
+        self.norm2 = nn.InstanceNorm2d(128)
         self.act2 = nn.LeakyReLU(0.2)
         self.conv3 = nn.Conv2d(128, 256, 4, 2, 1)
-        self.bn3 = nn.BatchNorm2d(256)
+        self.norm3 = nn.InstanceNorm2d(256)
         self.act3 = nn.LeakyReLU(0.2)
 
         # resnet
@@ -138,10 +144,10 @@ class Generator(nn.Module):
         
         # decoder
         self.convT1 = nn.ConvTranspose2d(256, 128, 4, 2, 1)
-        self.bn4 = nn.BatchNorm2d(128)
+        self.norm4 = nn.InstanceNorm2d(128)
         self.act13 = nn.ReLU()
         self.convT2 = nn.ConvTranspose2d(128, 64, 4, 2, 1)
-        self.bn5 = nn.BatchNorm2d(64)
+        self.norm5 = nn.InstanceNorm2d(64)
         self.act14 = nn.ReLU()
         self.convT3 = nn.ConvTranspose2d(64, 3, 4, 2, 1)
         self.act15 = nn.Tanh()
@@ -149,9 +155,9 @@ class Generator(nn.Module):
     def forward(self, x):
 
         # encoder
-        out = self.act1(self.bn1(self.conv1(x)))
-        out = self.act2(self.bn2(self.conv2(out)))
-        out = self.act3(self.bn3(self.conv3(out)))
+        out = self.act1(self.norm1(self.conv1(x)))
+        out = self.act2(self.norm2(self.conv2(out)))
+        out = self.act3(self.norm3(self.conv3(out)))
 
         # resnet
         out = self.resnet1(out)
@@ -162,8 +168,8 @@ class Generator(nn.Module):
         out = self.resnet6(out)
 
         # decoder
-        out = self.act13(self.bn4(self.convT1(out)))
-        out = self.act14(self.bn5(self.convT2(out)))
+        out = self.act13(self.norm4(self.convT1(out)))
+        out = self.act14(self.norm5(self.convT2(out)))
         out = self.act15(self.convT3(out))
         return out
 
@@ -174,15 +180,16 @@ class Discriminator(nn.Module):
     def __init__(self):
         super().__init__()
         self.conv1 = nn.Conv2d(3, 64, 4, 2, 1)
+        self.norm1 = nn.InstanceNorm2d(64)
         self.act1 = nn.LeakyReLU(0.2)
         self.conv2 = nn.Conv2d(64, 128, 4, 2, 1)
-        self.bn2 = nn.BatchNorm2d(128)
+        self.norm2 = nn.InstanceNorm2d(128)
         self.act2 = nn.LeakyReLU(0.2)
         self.conv3 = nn.Conv2d(128, 256, 4, 2, 1)
-        self.bn3 = nn.BatchNorm2d(256)
+        self.norm3 = nn.InstanceNorm2d(256)
         self.act3 = nn.LeakyReLU(0.2)
         self.conv4 = nn.Conv2d(256, 512, 4, 2, 1)
-        self.bn4 = nn.BatchNorm2d(512)
+        self.norm4 = nn.InstanceNorm2d(512)
         self.act4 = nn.LeakyReLU(0.2)
 
         # apply a convolution to reduce depth to 1
@@ -190,10 +197,10 @@ class Discriminator(nn.Module):
         self.act5 = nn.Sigmoid()
 
     def forward(self, x):
-        out = self.act1(self.conv1(x)) 
-        out = self.act2(self.bn2(self.conv2(out)))
-        out = self.act3(self.bn3(self.conv3(out)))
-        out = self.act4(self.bn4(self.conv4(out)))
+        out = self.act1(self.norm1(self.conv1(x)))
+        out = self.act2(self.norm2(self.conv2(out)))
+        out = self.act3(self.norm3(self.conv3(out)))
+        out = self.act4(self.norm4(self.conv4(out)))
         out = self.conv5(out).squeeze().unsqueeze(1)
         out = self.act5(out)
         return out
@@ -218,15 +225,36 @@ D_opt = optim.Adam(list(D_X.parameters()) + list(D_Y.parameters()), lr=lr, betas
 
 
 ################################################################################
+# History buffer for old generated iamges
+################################################################################
+
+class Buffer(object):
+    def __init__(self, max_size):
+        self.max_size = max_size
+        self.buf = []
+
+    def push(self, batch):
+        ret = []
+        for i in range(batch_size):
+            image = batch[i, :, :, :]
+            if len(self.buf) < self.max_size:
+                self.buf.append(image)
+                ret.append(image)
+            else:
+                if np.random.rand() < 0.5:
+                    idx = np.random.randint(self.max_size + 1)
+                    ret.append(self.buf[idx].clone())
+                    self.buf[idx] = image
+                else:
+                    ret.append(image)
+        return torch.stack(ret)
+
+
+################################################################################
 # Auxilliary functions for visualization in Tensorboard
 ################################################################################
 
 def merge_images(sources, targets):
-    """Creates a grid consisting of pairs of columns, where the first column in
-    each pair contains images source images and the second column in each pair
-    contains images generated by the CycleGAN from the corresponding images in
-    the first column.
-    """
     _, _, h, w = sources.shape
     row = int(np.sqrt(batch_size))
     merged = np.zeros([3, row * h, row * w * 2])
@@ -237,14 +265,20 @@ def merge_images(sources, targets):
         merged[:, i * h:(i + 1) * h, (j * 2 + 1) * h:(j * 2 + 2) * h] = t
     return merged.transpose(1, 2, 0)
 
+def denorm_for_print(image):
+    image = image.cpu().data.numpy()
+    image = (image * 0.5) + 0.5
+    image = image.clip(0, 1)
+    return image
+
 def log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, steps_done, save=False):
     fake_X = G_YtoX(monitor_Y)
     fake_Y = G_XtoY(monitor_X)
 
-    X = monitor_X.cpu().data.numpy()
-    fake_X = fake_X.cpu().data.numpy()
-    Y = monitor_Y.cpu().data.numpy()
-    fake_Y = fake_Y.cpu().data.numpy()
+    X = denorm_for_print(monitor_X)
+    fake_Y = denorm_for_print(fake_Y)
+    Y = denorm_for_print(monitor_Y)
+    fake_X = denorm_for_print(fake_X)
 
     merged_XtoY = merge_images(X, fake_Y)
     writer.add_image('X, generated Y', merged_XtoY.transpose(2, 0, 1), global_step=steps_done)
@@ -259,6 +293,13 @@ def log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, steps_done, save=False):
         scipy.misc.imsave(path, merged_YtoX)
         path = '../saved_imgs/{}/iter_{}-X-Y.png'.format(run, steps_done)
         scipy.misc.imsave(path, merged_XtoY)
+
+def log_gradient(model, phase, steps_done):
+    params = model.state_dict()
+    model_type = 'generator' if type(model) == Generator else 'discriminator'
+    for layer, weights in params.items():
+        if 'conv' in layer:
+            writer.add_histogram('{}.{}.{}'.format(model_type, phase, layer), weights, global_step=steps_done)
 
 
 ################################################################################
@@ -275,6 +316,8 @@ monitor_Y, _ = monitor_Y_data
 
 monitor_X = monitor_X.to(device)
 monitor_Y = monitor_Y.to(device)
+
+history = Buffer(buffer_max_size)
 
 for i_epoch in range(nb_epochs):
     for i_batch, data in enumerate(train_loader):
@@ -312,15 +355,21 @@ for i_epoch in range(nb_epochs):
 
         D_real_loss = D_X_real_loss + D_Y_real_loss
 
-        # slow learning rate of discriminator by halving the loss
-        D_real_loss /= 2
+        if should_halve_loss:
+            # slow learning rate of discriminator by halving the loss
+            D_real_loss /= 2
 
         D_real_loss.backward()
+        log_gradient(D_X, 'D_X.real', steps_done)
+        log_gradient(D_Y, 'D_Y.real', steps_done)
         D_opt.step()
 
         # generating fake images
         fake_img_X = G_YtoX(real_img_Y)
         fake_img_Y = G_XtoY(real_img_X)
+
+        fake_img_X = history.push(fake_img_X).detach()
+        fake_img_Y = history.push(fake_img_Y).detach()
 
         # fake image loss
         D_opt.zero_grad()
@@ -329,10 +378,13 @@ for i_epoch in range(nb_epochs):
 
         D_fake_loss = D_X_fake_loss + D_Y_fake_loss
 
-        # slow learning rate of discriminator by halving the loss
-        D_fake_loss /= 2
+        if should_halve_loss:
+            # slow learning rate of discriminator by halving the loss
+            D_fake_loss /= 2
 
         D_fake_loss.backward()
+        log_gradient(D_X, 'D_X.fake', steps_done)
+        log_gradient(D_Y, 'D_Y.fake', steps_done)
         D_opt.step()
 
         D_loss = D_real_loss + D_fake_loss
@@ -366,6 +418,8 @@ for i_epoch in range(nb_epochs):
         G_Y_loss = G_YtoX_loss + lambda_ * G_YtoXtoY_loss
 
         G_Y_loss.backward()
+        log_gradient(G_XtoY, 'G_XtoY.YtoX', steps_done)
+        log_gradient(G_YtoX, 'G_YtoX.YtoX', steps_done)
         G_opt.step()
        
         # X to Y to X 
@@ -381,6 +435,8 @@ for i_epoch in range(nb_epochs):
         G_X_loss = G_XtoY_loss + lambda_ * G_XtoYtoX_loss
 
         G_X_loss.backward()
+        log_gradient(G_XtoY, 'G_XtoY.XtoY', steps_done)
+        log_gradient(G_YtoX, 'G_YtoX.XtoY', steps_done)
         G_opt.step()
 
         G_loss = G_X_loss + G_Y_loss
