@@ -30,8 +30,7 @@ from torch.utils.data import DataLoader, Dataset
 ################################################################################
 
 # format is date.run_number this day
-run = '053119.run09'
-run = 'test'
+run = '060119.run00'
 if not os.path.exists('../weights/{}'.format(run)):
     os.mkdir('../weights/{}'.format(run))
 if not os.path.exists('../logs/{}'.format(run)):
@@ -46,14 +45,15 @@ writer = SummaryWriter('../logs/{}'.format(run))
 
 batch_size = 4
 nb_epochs = 200
-lr = 2e-4
+lr = 1e-4
 betas = (0.5, 0.999)
 use_label_smoothing = True
-lambda_ = 5
+lambda_ = 10.
 use_noisy_labels = False
 noisy_p = 0.05
 should_halve_loss = True
 buffer_max_size = 50
+use_replay_buffer = True
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 dtype = torch.cuda.FloatTensor if device == 'cuda' else torch.FloatTensor
@@ -153,7 +153,6 @@ class Generator(nn.Module):
         self.act15 = nn.Tanh()
 
     def forward(self, x):
-
         # encoder
         out = self.act1(self.norm1(self.conv1(x)))
         out = self.act2(self.norm2(self.conv2(out)))
@@ -206,8 +205,9 @@ class Discriminator(nn.Module):
         return out
 
 def init_weights(layer):
-    if type(layer) == nn.Conv2d:
+    if isinstance(layer, nn.Conv2d) or isinstance(layer, nn.ConvTranspose2d):
         nn.init.normal_(layer.weight, mean=0, std=0.02)
+        nn.init.constant_(layer.bias, 0.0)
 
 G_XtoY = Generator().to(device)
 G_YtoX = Generator().to(device)
@@ -242,7 +242,7 @@ class Buffer(object):
                 ret.append(image)
             else:
                 if np.random.rand() < 0.5:
-                    idx = np.random.randint(self.max_size + 1)
+                    idx = np.random.randint(self.max_size)
                     ret.append(self.buf[idx].clone())
                     self.buf[idx] = image
                 else:
@@ -263,7 +263,7 @@ def merge_images(sources, targets):
         j = idx % row
         merged[:, i * h:(i + 1) * h, (j * 2) * h:(j * 2 + 1) * h] = s
         merged[:, i * h:(i + 1) * h, (j * 2 + 1) * h:(j * 2 + 2) * h] = t
-    return merged.transpose(1, 2, 0)
+    return merged
 
 def denorm_for_print(image):
     image = image.cpu().data.numpy()
@@ -281,10 +281,10 @@ def log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, steps_done, save=False):
     fake_X = denorm_for_print(fake_X)
 
     merged_XtoY = merge_images(X, fake_Y)
-    writer.add_image('X, generated Y', merged_XtoY.transpose(2, 0, 1), global_step=steps_done)
+    writer.add_image('X, generated Y', merged_XtoY, global_step=steps_done)
 
     merged_YtoX = merge_images(Y, fake_X)
-    writer.add_image('Y, generated X', merged_YtoX.transpose(2, 0, 1), global_step=steps_done)
+    writer.add_image('Y, generated X', merged_YtoX, global_step=steps_done)
 
     if save:
         if not os.path.exists('../saved_imgs/{}'.format(run)):
@@ -294,12 +294,11 @@ def log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, steps_done, save=False):
         path = '../saved_imgs/{}/iter_{}-X-Y.png'.format(run, steps_done)
         scipy.misc.imsave(path, merged_XtoY)
 
-def log_gradient(model, phase, steps_done):
+def log_weights(model, which, steps_done):
     params = model.state_dict()
-    model_type = 'generator' if type(model) == Generator else 'discriminator'
     for layer, weights in params.items():
         if 'conv' in layer:
-            writer.add_histogram('{}.{}.{}'.format(model_type, phase, layer), weights, global_step=steps_done)
+            writer.add_histogram('{}.{}'.format(which, layer), weights, global_step=steps_done)
 
 
 ################################################################################
@@ -320,6 +319,7 @@ monitor_Y = monitor_Y.to(device)
 history = Buffer(buffer_max_size)
 
 for i_epoch in range(nb_epochs):
+    print('i_epoch: ', i_epoch)
     for i_batch, data in enumerate(train_loader):
 
         # unpacking data from loader
@@ -360,16 +360,18 @@ for i_epoch in range(nb_epochs):
             D_real_loss /= 2
 
         D_real_loss.backward()
-        log_gradient(D_X, 'D_X.real', steps_done)
-        log_gradient(D_Y, 'D_Y.real', steps_done)
         D_opt.step()
 
         # generating fake images
         fake_img_X = G_YtoX(real_img_Y)
         fake_img_Y = G_XtoY(real_img_X)
 
-        fake_img_X = history.push(fake_img_X).detach()
-        fake_img_Y = history.push(fake_img_Y).detach()
+        if use_replay_buffer:
+            fake_img_X = history.push(fake_img_X).detach()
+            fake_img_Y = history.push(fake_img_Y).detach()
+
+            assert fake_img_X.shape == fake_img_Y.shape, 'mismatch in data shape from buffer'
+            assert fake_img_X.shape == real_img_X.shape, 'incorrect shape returned from buffer'
 
         # fake image loss
         D_opt.zero_grad()
@@ -383,13 +385,14 @@ for i_epoch in range(nb_epochs):
             D_fake_loss /= 2
 
         D_fake_loss.backward()
-        log_gradient(D_X, 'D_X.fake', steps_done)
-        log_gradient(D_Y, 'D_Y.fake', steps_done)
         D_opt.step()
 
         D_loss = D_real_loss + D_fake_loss
 
-        # logging scalars
+        # logging scalars and weights
+        log_weights(D_X, 'D_X', steps_done)
+        log_weights(D_Y, 'D_Y', steps_done)
+
         writer.add_scalar('discriminator loss on real X', D_X_real_loss.item(), global_step=steps_done)
         writer.add_scalar('discriminator loss on real Y', D_Y_real_loss.item(), global_step=steps_done)
         writer.add_scalar('discriminator loss on fake X', D_X_fake_loss.item(), global_step=steps_done)
@@ -418,8 +421,6 @@ for i_epoch in range(nb_epochs):
         G_Y_loss = G_YtoX_loss + lambda_ * G_YtoXtoY_loss
 
         G_Y_loss.backward()
-        log_gradient(G_XtoY, 'G_XtoY.YtoX', steps_done)
-        log_gradient(G_YtoX, 'G_YtoX.YtoX', steps_done)
         G_opt.step()
        
         # X to Y to X 
@@ -435,13 +436,14 @@ for i_epoch in range(nb_epochs):
         G_X_loss = G_XtoY_loss + lambda_ * G_XtoYtoX_loss
 
         G_X_loss.backward()
-        log_gradient(G_XtoY, 'G_XtoY.XtoY', steps_done)
-        log_gradient(G_YtoX, 'G_YtoX.XtoY', steps_done)
         G_opt.step()
 
         G_loss = G_X_loss + G_Y_loss
  
-        # logging scalars
+        # logging scalars and weights
+        log_weights(G_XtoY, 'G_XtoY', steps_done)
+        log_weights(G_YtoX, 'G_YtoX', steps_done)
+
         writer.add_scalar('generator X to Y loss', G_XtoY_loss.item(), global_step=steps_done)
         writer.add_scalar('generator Y to X loss', G_YtoX_loss.item(), global_step=steps_done)
         writer.add_scalar('generator cycle consistency loss for X', G_XtoYtoX_loss.item(), global_step=steps_done)
