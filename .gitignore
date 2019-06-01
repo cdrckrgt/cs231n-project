@@ -116,3 +116,4 @@ logs/*
 old/*
 saved_imgs/*
 weights/*
+older_logs/*

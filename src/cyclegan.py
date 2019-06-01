@@ -3,9 +3,7 @@ Cedrick Argueta, Kevin Wang
 cedrick@cs.stanford.edu
 kwang98@stanford.edu
 
-
 Implementation of CycleGAN for use on a dataset involving sketches of trees and tree photos
-
 '''
 
 import os
@@ -14,7 +12,6 @@ import math
 import scipy
 import itertools
 from skimage import io, transform
-from sklearn.preprocessing import MinMaxScaler
 from PIL import Image
 
 from torchvision import transforms, utils
@@ -33,27 +30,31 @@ from torch.utils.data import DataLoader, Dataset
 ################################################################################
 
 # format is date.run_number this day
-run = '053119.run05'
-if not os.path.exists('../saved_imgs/{}'.format(run)):
-    os.mkdir('../saved_imgs/{}'.format(run))
+run = '053119.run07'
 if not os.path.exists('../weights/{}'.format(run)):
     os.mkdir('../weights/{}'.format(run))
+if not os.path.exists('../logs/{}'.format(run)):
+    os.mkdir('../logs/{}'.format(run))
 
 writer = SummaryWriter('../logs/{}'.format(run))
+
 
 ################################################################################
 # Setting hyperparameters
 ################################################################################
 
-batch_size = 16
+batch_size = 4
 nb_epochs = 200
-lr = 1e-3
+lr = 2e-4
 betas = (0.5, 0.999)
 use_label_smoothing = True
 lambda_ = 10
+use_noisy_label = True
+noisy_p = 0.05
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 dtype = torch.cuda.FloatTensor if device == 'cuda' else torch.FloatTensor
+
 
 ################################################################################
 # Loading data from folder and creating DataLoaders
@@ -65,7 +66,7 @@ transform_sketch = transforms.Compose([
 ])
 transform_photo = transforms.Compose([
     transforms.Resize((256, 256)),
-    transforms.ColorJitter(hue=.05, saturation=.05),
+    transforms.ColorJitter(hue=0.05, saturation=0.05, brightness=0.05),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
 ])
@@ -92,7 +93,7 @@ class DualDomainDataset(Dataset):
         return max(len(self.datasetA), len(self.datasetB))
 
 train_data = DualDomainDataset(photo_data, sketch_data)
-train_loader = DataLoader(dataset=train_data, batch_size=batch_size, shuffle=True)
+train_loader = DataLoader(dataset=train_data, batch_size=batch_size, shuffle=True, drop_last=True)
 
 
 ################################################################################
@@ -104,10 +105,12 @@ class ResnetBlock(nn.Module):
         super().__init__()
         self.conv = nn.Conv2d(dim, dim, 3, 1, 1)
         self.bn = nn.BatchNorm2d(dim)
+        self.act = nn.LeakyReLU(0.2)
 
     def forward(self, x):
-        out = self.conv(x)
+        out = self.bn(self.conv(x))
         out = out + x
+        out = self.act(out)
         return out
 
 class Generator(nn.Module):
@@ -115,53 +118,6 @@ class Generator(nn.Module):
         super().__init__()
        
         # encoder 
-        self.conv1 = nn.Conv2d(3, 32, 4, 2, 1)
-        self.bn1 = nn.BatchNorm2d(32)
-        self.act1 = nn.LeakyReLU(0.2)
-        self.conv2 = nn.Conv2d(32, 64, 4, 2, 1)
-        self.bn2 = nn.BatchNorm2d(64)
-        self.act2 = nn.LeakyReLU(0.2)
-        self.conv3 = nn.Conv2d(64, 128, 4, 2, 1)
-        self.bn3 = nn.BatchNorm2d(128)
-        self.act3 = nn.LeakyReLU(0.2)
-
-        # resnet
-        self.resnet1 = ResnetBlock(128)
-        self.act4 = nn.LeakyReLU(0.2)
-        self.resnet2 = ResnetBlock(128)
-        self.act5 = nn.LeakyReLU(0.2)
-        self.resnet3 = ResnetBlock(128)
-        self.act6 = nn.LeakyReLU(0.2)
-        
-        # decoder
-        self.convT1 = nn.ConvTranspose2d(128, 64, 4, 2, 1)
-        self.bn4 = nn.BatchNorm2d(64)
-        self.act13 = nn.LeakyReLU(0.2)
-        self.convT2 = nn.ConvTranspose2d(64, 32, 4, 2, 1)
-        self.bn5 = nn.BatchNorm2d(32)
-        self.act14 = nn.LeakyReLU(0.2)
-        self.convT3 = nn.ConvTranspose2d(32, 3, 4, 2, 1)
-        self.act15 = nn.Tanh()
-
-    def forward(self, x):
-        # encoder
-        out = self.act1(self.bn1(self.conv1(x)))
-        out = self.act2(self.bn2(self.conv2(out)))
-        out = self.act3(self.bn3(self.conv3(out)))
-        # resnet
-        out = self.act4(self.resnet1(out))
-        out = self.act5(self.resnet2(out))
-        out = self.act6(self.resnet3(out))
-
-        # decoder
-        out = self.act13(self.bn4(self.convT1(out)))
-        out = self.act14(self.bn5(self.convT2(out)))
-        out = self.act15(self.convT3(out))
-        return out
-
-class Discriminator(nn.Module):
-    def __init__(self):
-        super().__init__()
         self.conv1 = nn.Conv2d(3, 64, 4, 2, 1)
         self.bn1 = nn.BatchNorm2d(64)
         self.act1 = nn.LeakyReLU(0.2)
@@ -172,16 +128,79 @@ class Discriminator(nn.Module):
         self.bn3 = nn.BatchNorm2d(256)
         self.act3 = nn.LeakyReLU(0.2)
 
-        self.conv5 = nn.Conv2d(256, 1, 32, 1, 0)
+        # resnet
+        self.resnet1 = ResnetBlock(256)
+        self.resnet2 = ResnetBlock(256)
+        self.resnet3 = ResnetBlock(256)
+        self.resnet4 = ResnetBlock(256)
+        self.resnet5 = ResnetBlock(256)
+        self.resnet6 = ResnetBlock(256)
+        
+        # decoder
+        self.convT1 = nn.ConvTranspose2d(256, 128, 4, 2, 1)
+        self.bn4 = nn.BatchNorm2d(128)
+        self.act13 = nn.ReLU()
+        self.convT2 = nn.ConvTranspose2d(128, 64, 4, 2, 1)
+        self.bn5 = nn.BatchNorm2d(64)
+        self.act14 = nn.ReLU()
+        self.convT3 = nn.ConvTranspose2d(64, 3, 4, 2, 1)
+        self.act15 = nn.Tanh()
+
+    def forward(self, x):
+
+        # encoder
+        out = self.act1(self.bn1(self.conv1(x)))
+        out = self.act2(self.bn2(self.conv2(out)))
+        out = self.act3(self.bn3(self.conv3(out)))
+
+        # resnet
+        out = self.resnet1(out)
+        out = self.resnet2(out)
+        out = self.resnet3(out)
+        out = self.resnet4(out)
+        out = self.resnet5(out)
+        out = self.resnet6(out)
+
+        # decoder
+        out = self.act13(self.bn4(self.convT1(out)))
+        out = self.act14(self.bn5(self.convT2(out)))
+        out = self.act15(self.convT3(out))
+        return out
+
+class Discriminator(nn.Module):
+    '''
+    takes architecture cues from pix2pix discriminator
+    '''
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(3, 64, 4, 2, 1)
+        self.act1 = nn.LeakyReLU(0.2)
+        self.conv2 = nn.Conv2d(64, 128, 4, 2, 1)
+        self.bn2 = nn.BatchNorm2d(128)
+        self.act2 = nn.LeakyReLU(0.2)
+        self.conv3 = nn.Conv2d(128, 256, 4, 2, 1)
+        self.bn3 = nn.BatchNorm2d(256)
+        self.act3 = nn.LeakyReLU(0.2)
+        self.conv4 = nn.Conv2d(256, 512, 4, 2, 1)
+        self.bn4 = nn.BatchNorm2d(512)
+        self.act4 = nn.LeakyReLU(0.2)
+
+        # apply a convolution to reduce depth to 1
+        self.conv5 = nn.Conv2d(512, 1, 16, 1, 0)
         self.act5 = nn.Sigmoid()
 
     def forward(self, x):
-        out = self.act1(self.bn1(self.conv1(x))) 
+        out = self.act1(self.conv1(x)) 
         out = self.act2(self.bn2(self.conv2(out)))
         out = self.act3(self.bn3(self.conv3(out)))
+        out = self.act4(self.bn4(self.conv4(out)))
         out = self.conv5(out).squeeze().unsqueeze(1)
         out = self.act5(out)
         return out
+
+def init_weights(layer):
+    if type(layer) == nn.Conv2d:
+        nn.init.normal_(layer.weight, mean=0, std=0.02)
 
 G_XtoY = Generator().to(device)
 G_YtoX = Generator().to(device)
@@ -189,6 +208,10 @@ G_YtoX = Generator().to(device)
 D_X = Discriminator().to(device)
 D_Y = Discriminator().to(device)
 
+G_XtoY.apply(init_weights)
+G_YtoX.apply(init_weights)
+D_X.apply(init_weights)
+D_Y.apply(init_weights)
 
 G_opt = optim.Adam(list(G_XtoY.parameters()) + list(G_YtoX.parameters()), lr=lr, betas=betas)
 D_opt = optim.Adam(list(D_X.parameters()) + list(D_Y.parameters()), lr=lr, betas=betas)
@@ -223,19 +246,20 @@ def log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, steps_done, save=False):
     Y = monitor_Y.cpu().data.numpy()
     fake_Y = fake_Y.cpu().data.numpy()
 
-    merged = merge_images(X, fake_Y)
-    writer.add_image('X, generated Y', merged.transpose(2, 0, 1), global_step=steps_done)
-    if save:
-        path = '../saved_imgs/{}/iter_{}-X-Y.png'.format(run, i)
-        scipy.misc.imsave(path, merged)
-        print('Saved {}'.format(path))
+    merged_XtoY = merge_images(X, fake_Y)
+    writer.add_image('X, generated Y', merged_XtoY.transpose(2, 0, 1), global_step=steps_done)
 
-    merged = merge_images(Y, fake_X)
-    writer.add_image('Y, generated X', merged.transpose(2, 0, 1), global_step=steps_done)
+    merged_YtoX = merge_images(Y, fake_X)
+    writer.add_image('Y, generated X', merged_YtoX.transpose(2, 0, 1), global_step=steps_done)
+
     if save:
-        path = '../saved_imgs/{}/iter_{}-Y-X.png'.format(run, i)
-        scipy.misc.imsave(path, merged)
-        print('Saved {}'.format(path))
+        if not os.path.exists('../saved_imgs/{}'.format(run)):
+            os.mkdir('../saved_imgs/{}'.format(run))
+        path = '../saved_imgs/{}/iter_{}-Y-X.png'.format(run, steps_done)
+        scipy.misc.imsave(path, merged_YtoX)
+        path = '../saved_imgs/{}/iter_{}-X-Y.png'.format(run, steps_done)
+        scipy.misc.imsave(path, merged_XtoY)
+
 
 ################################################################################
 # Training Loop
@@ -245,8 +269,12 @@ steps_done = 0
 
 monitor_data = next(iter(train_loader))
 monitor_X_data, monitor_Y_data = monitor_data
+
 monitor_X, _ = monitor_X_data
 monitor_Y, _ = monitor_Y_data
+
+monitor_X = monitor_X.to(device)
+monitor_Y = monitor_Y.to(device)
 
 for i_epoch in range(nb_epochs):
     for i_batch, data in enumerate(train_loader):
@@ -261,16 +289,23 @@ for i_epoch in range(nb_epochs):
         real_img_Y = real_img_Y.to(device)
 
         assert real_img_X.shape == real_img_Y.shape, 'mismatch in data shape from dataloader'
+        assert real_img_X.shape[0] == batch_size, 'incorrect batch_size for loaded batch'
 
         ########################################################################
         # Discriminator Loss
         ########################################################################
-        D_opt.zero_grad()
 
-        # label smoothing
+        # label smoothing adds noise to discriminator training, weakens D 
         true_label = 1
+        fake_label = 0
         if use_label_smoothing:
             true_label = torch.tensor(np.random.uniform(low=0.7, high=1.2, size=(batch_size, 1))).to(device).float()
+            fake_label = torch.tensor(np.random.uniform(low=0.0, high=0.3, size=(batch_size, 1))).to(device).float()
+        if use_noisy_labels and np.random.rand() < noisy_p:
+            true_label, fake_label = fake_label, true_label
+
+        # real image loss
+        D_opt.zero_grad()
 
         D_X_real_loss = torch.sum(torch.pow(D_X(real_img_X) - true_label, 2)) / batch_size
         D_Y_real_loss = torch.sum(torch.pow(D_Y(real_img_Y) - true_label, 2)) / batch_size
@@ -283,15 +318,11 @@ for i_epoch in range(nb_epochs):
         D_real_loss.backward()
         D_opt.step()
 
-        # generating fake images for X and Y
+        # generating fake images
         fake_img_X = G_YtoX(real_img_Y)
         fake_img_Y = G_XtoY(real_img_X)
 
-        # fake loss
-        fake_label = 0
-        if use_label_smoothing:
-            fake_label = torch.tensor(np.random.uniform(low=0.0, high=0.3, size=(batch_size, 1))).to(device).float()
-
+        # fake image loss
         D_opt.zero_grad()
         D_X_fake_loss = torch.sum(torch.pow(D_X(fake_img_X) - fake_label, 2)) / batch_size
         D_Y_fake_loss = torch.sum(torch.pow(D_Y(fake_img_Y) - fake_label, 2)) / batch_size
@@ -319,6 +350,9 @@ for i_epoch in range(nb_epochs):
         # Generator Loss
         ########################################################################
 
+        true_label = 1
+        fake_label = 0
+
         # Y to X to Y
         G_opt.zero_grad()
             
@@ -329,7 +363,6 @@ for i_epoch in range(nb_epochs):
         reconstructed_Y = G_XtoY(fake_img_X)
         G_YtoXtoY_loss = torch.sum(torch.pow(real_img_Y - reconstructed_Y, 2)) / batch_size
 
-        # generating fake images for X
         G_Y_loss = G_YtoX_loss + lambda_ * G_YtoXtoY_loss
 
         G_Y_loss.backward()
@@ -361,19 +394,21 @@ for i_epoch in range(nb_epochs):
         writer.add_scalar('total generator loss for Y', G_Y_loss.item(), global_step=steps_done)
         writer.add_scalar('total generator loss', G_loss.item(), global_step=steps_done)
 
+        if steps_done % 100 == 0:
+            log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, steps_done)
+
         steps_done += 1
+
     ############################################################################
-    # Logging and Model Checkpointing
+    # Model Checkpointing
     ############################################################################
 
-    if i_epoch % 10 == 0:
-        log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, steps_done)
-
-    if i_epoch != 0 and i_epoch % 500 == 0:
+    if i_epoch != 0 and i_epoch % 50 == 0:
         torch.save(G_XtoY.state_dict(), '../weights/{0}/G_XtoY.iter_{1}.pt'.format(run, i_epoch))
         torch.save(G_YtoX.state_dict(), '../weights/{0}/G_YtoX.iter_{1}.pt'.format(run, i_epoch))
         torch.save(D_X.state_dict(), '../weights/{0}/D_X.iter_{1}.pt'.format(run, i_epoch))
         torch.save(D_Y.state_dict(), '../weights/{0}/D_Y.iter_{1}.pt'.format(run, i_epoch))
+
 
 ################################################################################
 # Saving Trained Model
