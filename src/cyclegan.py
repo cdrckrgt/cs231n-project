@@ -36,7 +36,7 @@ if not os.path.exists('../weights/{}'.format(run)):
 if not os.path.exists('../logs/{}'.format(run)):
     os.mkdir('../logs/{}'.format(run))
 
-writer = SummaryWriter('../logs/{}>>>>>>>>>>>>'.format(run))
+writer = SummaryWriter('../logs/{}'.format(run))
 
 
 ################################################################################
@@ -52,7 +52,7 @@ lambda_ = 10.
 use_noisy_labels = False
 noisy_p = 0.05
 should_halve_loss = True
-buffer_max_size = 50
+buffer_max_size = 40
 use_replay_buffer = True
 # https://ssnl.github.io/better_cycles/report.pdf
 use_better_cycles = True
@@ -149,7 +149,7 @@ class Generator(nn.Module):
         self.resnet1 = ResnetBlock(256)
         self.resnet2 = ResnetBlock(256)
         self.resnet3 = ResnetBlock(256)
-        self.resnet4 = ResnetBlock(256)
+        # self.resnet4 = ResnetBlock(256)
         # self.resnet5 = ResnetBlock(256)
         # self.resnet6 = ResnetBlock(256)
         
@@ -173,7 +173,7 @@ class Generator(nn.Module):
         out = self.resnet1(out)
         out = self.resnet2(out)
         out = self.resnet3(out)
-        out = self.resnet4(out)
+        # out = self.resnet4(out)
         # out = self.resnet5(out)
         # out = self.resnet6(out)
 
