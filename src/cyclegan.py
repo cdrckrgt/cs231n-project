@@ -30,13 +30,13 @@ from torch.utils.data import DataLoader, Dataset
 ################################################################################
 
 # format is date.run_number this day
-run = '060119.run00'
+run = '060119.run01'
 if not os.path.exists('../weights/{}'.format(run)):
     os.mkdir('../weights/{}'.format(run))
 if not os.path.exists('../logs/{}'.format(run)):
     os.mkdir('../logs/{}'.format(run))
 
-writer = SummaryWriter('../logs/{}'.format(run))
+writer = SummaryWriter('../logs/{}>>>>>>>>>>>>'.format(run))
 
 
 ################################################################################
@@ -45,7 +45,7 @@ writer = SummaryWriter('../logs/{}'.format(run))
 
 batch_size = 4
 nb_epochs = 200
-lr = 1e-4
+lr = 2e-4
 betas = (0.5, 0.999)
 use_label_smoothing = True
 lambda_ = 10.
@@ -54,6 +54,13 @@ noisy_p = 0.05
 should_halve_loss = True
 buffer_max_size = 50
 use_replay_buffer = True
+# https://ssnl.github.io/better_cycles/report.pdf
+use_better_cycles = True
+gamma = 0.1
+gamma_start = gamma
+gamma_end = 0.95
+lambda_start = lambda_
+lambda_end = 0.0
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 dtype = torch.cuda.FloatTensor if device == 'cuda' else torch.FloatTensor
@@ -109,14 +116,18 @@ train_loader = DataLoader(dataset=train_data, batch_size=batch_size, shuffle=Tru
 class ResnetBlock(nn.Module):
     def __init__(self, dim):
         super().__init__()
-        self.conv = nn.Conv2d(dim, dim, 3, 1, 1)
-        self.norm = nn.InstanceNorm2d(dim)
-        self.act = nn.LeakyReLU(0.2)
+        self.conv1 = nn.Conv2d(dim, dim, 3, 1, 1)
+        self.norm1 = nn.InstanceNorm2d(dim)
+        self.act1 = nn.LeakyReLU(0.2)
+        self.conv2 = nn.Conv2d(dim, dim, 3, 1, 1)
+        self.norm2 = nn.InstanceNorm2d(dim)
+        self.act2 = nn.LeakyReLU(0.2)
 
     def forward(self, x):
-        out = self.norm(self.conv(x))
+        out = self.act1(self.norm1(self.conv1(x)))
+        out = self.norm2(self.conv2(out))
         out = out + x
-        out = self.act(out)
+        out = self.act2(out)
         return out
 
 class Generator(nn.Module):
@@ -139,8 +150,8 @@ class Generator(nn.Module):
         self.resnet2 = ResnetBlock(256)
         self.resnet3 = ResnetBlock(256)
         self.resnet4 = ResnetBlock(256)
-        self.resnet5 = ResnetBlock(256)
-        self.resnet6 = ResnetBlock(256)
+        # self.resnet5 = ResnetBlock(256)
+        # self.resnet6 = ResnetBlock(256)
         
         # decoder
         self.convT1 = nn.ConvTranspose2d(256, 128, 4, 2, 1)
@@ -163,8 +174,8 @@ class Generator(nn.Module):
         out = self.resnet2(out)
         out = self.resnet3(out)
         out = self.resnet4(out)
-        out = self.resnet5(out)
-        out = self.resnet6(out)
+        # out = self.resnet5(out)
+        # out = self.resnet6(out)
 
         # decoder
         out = self.act13(self.norm4(self.convT1(out)))
@@ -199,10 +210,10 @@ class Discriminator(nn.Module):
         out = self.act1(self.norm1(self.conv1(x)))
         out = self.act2(self.norm2(self.conv2(out)))
         out = self.act3(self.norm3(self.conv3(out)))
-        out = self.act4(self.norm4(self.conv4(out)))
-        out = self.conv5(out).squeeze().unsqueeze(1)
+        feature_out = self.act4(self.norm4(self.conv4(out)))
+        out = self.conv5(feature_out).squeeze().unsqueeze(1)
         out = self.act5(out)
-        return out
+        return out, feature_out.detach()
 
 def init_weights(layer):
     if isinstance(layer, nn.Conv2d) or isinstance(layer, nn.ConvTranspose2d):
@@ -318,154 +329,189 @@ monitor_Y = monitor_Y.to(device)
 
 history = Buffer(buffer_max_size)
 
+from progress.bar import IncrementalBar
+
 for i_epoch in range(nb_epochs):
     print('i_epoch: ', i_epoch)
-    for i_batch, data in enumerate(train_loader):
+    with IncrementalBar('batches', max=len(train_loader)) as bar:
+        for i_batch, data in enumerate(train_loader):
 
-        # unpacking data from loader
-        X_data, Y_data = data
+            # unpacking data from loader
+            X_data, Y_data = data
 
-        real_img_X, _ = X_data
-        real_img_Y, _ = Y_data
+            real_img_X, _ = X_data
+            real_img_Y, _ = Y_data
 
-        real_img_X = real_img_X.to(device)
-        real_img_Y = real_img_Y.to(device)
+            real_img_X = real_img_X.to(device)
+            real_img_Y = real_img_Y.to(device)
 
-        assert real_img_X.shape == real_img_Y.shape, 'mismatch in data shape from dataloader'
-        assert real_img_X.shape[0] == batch_size, 'incorrect batch_size for loaded batch'
+            assert real_img_X.shape == real_img_Y.shape, 'mismatch in data shape from dataloader'
+            assert real_img_X.shape[0] == batch_size, 'incorrect batch_size for loaded batch'
 
-        ########################################################################
-        # Discriminator Loss
-        ########################################################################
+            ########################################################################
+            # Discriminator Loss
+            ########################################################################
 
-        # label smoothing adds noise to discriminator training, weakens D 
-        true_label = 1
-        fake_label = 0
-        if use_label_smoothing:
-            true_label = torch.tensor(np.random.uniform(low=0.7, high=1.2, size=(batch_size, 1))).to(device).float()
-            fake_label = torch.tensor(np.random.uniform(low=0.0, high=0.3, size=(batch_size, 1))).to(device).float()
-        if use_noisy_labels and np.random.rand() < noisy_p:
-            true_label, fake_label = fake_label, true_label
+            # label smoothing adds noise to discriminator training, weakens D 
+            true_label = 1
+            fake_label = 0
+            if use_label_smoothing:
+                true_label = torch.tensor(np.random.uniform(low=0.7, high=1.2, size=(batch_size, 1))).to(device).float()
+                fake_label = torch.tensor(np.random.uniform(low=0.0, high=0.3, size=(batch_size, 1))).to(device).float()
+            if use_noisy_labels and np.random.rand() < noisy_p:
+                true_label, fake_label = fake_label, true_label
 
-        # real image loss
-        D_opt.zero_grad()
+            # real image loss
+            D_opt.zero_grad()
 
-        D_X_real_loss = torch.sum(torch.pow(D_X(real_img_X) - true_label, 2)) / batch_size
-        D_Y_real_loss = torch.sum(torch.pow(D_Y(real_img_Y) - true_label, 2)) / batch_size
+            real_X_pred, real_X_features = D_X(real_img_X)
+            real_Y_pred, real_Y_features = D_Y(real_img_Y)
+            D_X_real_loss = torch.sum(torch.pow(real_X_pred - true_label, 2)) / batch_size
+            D_Y_real_loss = torch.sum(torch.pow(real_Y_pred - true_label, 2)) / batch_size
 
-        D_real_loss = D_X_real_loss + D_Y_real_loss
+            D_real_loss = D_X_real_loss + D_Y_real_loss
 
-        if should_halve_loss:
-            # slow learning rate of discriminator by halving the loss
-            D_real_loss /= 2
+            if should_halve_loss:
+                # slow learning rate of discriminator by halving the loss
+                D_real_loss /= 2
 
-        D_real_loss.backward()
-        D_opt.step()
+            D_real_loss.backward()
+            D_opt.step()
 
-        # generating fake images
-        fake_img_X = G_YtoX(real_img_Y)
-        fake_img_Y = G_XtoY(real_img_X)
+            # generating fake images
+            fake_img_X = G_YtoX(real_img_Y)
+            fake_img_Y = G_XtoY(real_img_X)
 
-        if use_replay_buffer:
-            fake_img_X = history.push(fake_img_X).detach()
-            fake_img_Y = history.push(fake_img_Y).detach()
+            if use_replay_buffer:
+                fake_img_X = history.push(fake_img_X).detach()
+                fake_img_Y = history.push(fake_img_Y).detach()
 
-            assert fake_img_X.shape == fake_img_Y.shape, 'mismatch in data shape from buffer'
-            assert fake_img_X.shape == real_img_X.shape, 'incorrect shape returned from buffer'
+                assert fake_img_X.shape == fake_img_Y.shape, 'mismatch in data shape from buffer'
+                assert fake_img_X.shape == real_img_X.shape, 'incorrect shape returned from buffer'
 
-        # fake image loss
-        D_opt.zero_grad()
-        D_X_fake_loss = torch.sum(torch.pow(D_X(fake_img_X) - fake_label, 2)) / batch_size
-        D_Y_fake_loss = torch.sum(torch.pow(D_Y(fake_img_Y) - fake_label, 2)) / batch_size
+            # fake image loss
+            D_opt.zero_grad()
 
-        D_fake_loss = D_X_fake_loss + D_Y_fake_loss
+            fake_X_pred, _ = D_X(fake_img_X)
+            fake_Y_pred, _ = D_Y(fake_img_Y)
+            D_X_fake_loss = torch.sum(torch.pow(fake_X_pred - fake_label, 2)) / batch_size
+            D_Y_fake_loss = torch.sum(torch.pow(fake_Y_pred - fake_label, 2)) / batch_size
 
-        if should_halve_loss:
-            # slow learning rate of discriminator by halving the loss
-            D_fake_loss /= 2
+            D_fake_loss = D_X_fake_loss + D_Y_fake_loss
 
-        D_fake_loss.backward()
-        D_opt.step()
+            if should_halve_loss:
+                # slow learning rate of discriminator by halving the loss
+                D_fake_loss /= 2
 
-        D_loss = D_real_loss + D_fake_loss
+            D_fake_loss.backward()
+            D_opt.step()
 
-        # logging scalars and weights
-        log_weights(D_X, 'D_X', steps_done)
-        log_weights(D_Y, 'D_Y', steps_done)
+            D_loss = D_real_loss + D_fake_loss
 
-        writer.add_scalar('discriminator loss on real X', D_X_real_loss.item(), global_step=steps_done)
-        writer.add_scalar('discriminator loss on real Y', D_Y_real_loss.item(), global_step=steps_done)
-        writer.add_scalar('discriminator loss on fake X', D_X_fake_loss.item(), global_step=steps_done)
-        writer.add_scalar('discriminator loss on fake Y', D_Y_fake_loss.item(), global_step=steps_done)
-        writer.add_scalar('total discriminator loss on real images', D_real_loss.item(), global_step=steps_done)
-        writer.add_scalar('total discriminator loss on fake images', D_fake_loss.item(), global_step=steps_done)
-        writer.add_scalar('total discriminator loss', D_loss.item(), global_step=steps_done)
+            # logging scalars and weights
+            log_weights(D_X, 'D_X', steps_done)
+            log_weights(D_Y, 'D_Y', steps_done)
 
-        ########################################################################
-        # Generator Loss
-        ########################################################################
+            writer.add_scalar('discriminator loss on real X', D_X_real_loss.item(), global_step=steps_done)
+            writer.add_scalar('discriminator loss on real Y', D_Y_real_loss.item(), global_step=steps_done)
+            writer.add_scalar('discriminator loss on fake X', D_X_fake_loss.item(), global_step=steps_done)
+            writer.add_scalar('discriminator loss on fake Y', D_Y_fake_loss.item(), global_step=steps_done)
+            writer.add_scalar('total discriminator loss on real images', D_real_loss.item(), global_step=steps_done)
+            writer.add_scalar('total discriminator loss on fake images', D_fake_loss.item(), global_step=steps_done)
+            writer.add_scalar('total discriminator loss', D_loss.item(), global_step=steps_done)
 
-        true_label = 1
-        fake_label = 0
+            ########################################################################
+            # Generator Loss
+            ########################################################################
 
-        # Y to X to Y
-        G_opt.zero_grad()
-            
-        fake_img_X = G_YtoX(real_img_Y)
+            true_label = 1
+            fake_label = 0
 
-        G_YtoX_loss = torch.sum(torch.pow(D_X(fake_img_X) - true_label, 2)) / batch_size
+            # Y to X to Y
+            G_opt.zero_grad()
+                
+            fake_img_X = G_YtoX(real_img_Y)
 
-        reconstructed_Y = G_XtoY(fake_img_X)
-        G_YtoXtoY_loss = torch.sum(torch.pow(real_img_Y - reconstructed_Y, 2)) / batch_size
+            fake_X_pred, _ = D_X(fake_img_X)
+            G_YtoX_loss = torch.sum(torch.pow(fake_X_pred - true_label, 2)) / batch_size
 
-        G_Y_loss = G_YtoX_loss + lambda_ * G_YtoXtoY_loss
+            reconstructed_Y = G_XtoY(fake_img_X)
+            if use_better_cycles:
+                _, reconstructed_Y_features = D_Y(reconstructed_Y)
+                real_Y_pred = real_Y_pred.detach()
 
-        G_Y_loss.backward()
-        G_opt.step()
-       
-        # X to Y to X 
-        G_opt.zero_grad()
+                G_YtoXtoY_loss = torch.sum(real_Y_pred \
+                    * (gamma * torch.sum(torch.pow(reconstructed_Y_features - real_Y_features, 2), (1, 2, 3)) \
+                    + (1 - gamma) * torch.sum(torch.pow(reconstructed_Y - real_img_Y, 2), (1, 2, 3)))) / batch_size
+            else:
+                G_YtoXtoY_loss = torch.sum(torch.pow(real_img_Y - reconstructed_Y, 2)) / batch_size
 
-        fake_img_Y = G_XtoY(real_img_X)
+            G_Y_loss = G_YtoX_loss + lambda_ * G_YtoXtoY_loss
 
-        G_XtoY_loss = torch.sum(torch.pow(D_Y(fake_img_Y) - true_label, 2)) / batch_size
+            G_Y_loss.backward()
+            G_opt.step()
+           
+            # X to Y to X 
+            G_opt.zero_grad()
 
-        reconstructed_X = G_YtoX(fake_img_Y)
-        G_XtoYtoX_loss = torch.sum(torch.pow(real_img_X - reconstructed_X, 2)) / batch_size
+            fake_img_Y = G_XtoY(real_img_X)
 
-        G_X_loss = G_XtoY_loss + lambda_ * G_XtoYtoX_loss
+            fake_Y_pred, _ = D_Y(fake_img_Y)
+            G_XtoY_loss = torch.sum(torch.pow(fake_Y_pred - true_label, 2)) / batch_size
 
-        G_X_loss.backward()
-        G_opt.step()
+            reconstructed_X = G_YtoX(fake_img_Y)
+            if use_better_cycles:
+                _, reconstructed_X_features = D_X(reconstructed_X)
+                real_X_pred = real_X_pred.detach()
 
-        G_loss = G_X_loss + G_Y_loss
- 
-        # logging scalars and weights
-        log_weights(G_XtoY, 'G_XtoY', steps_done)
-        log_weights(G_YtoX, 'G_YtoX', steps_done)
+                G_XtoYtoX_loss = torch.sum(real_X_pred \
+                    * (gamma * torch.sum(torch.pow(reconstructed_X_features - real_X_features, 2), (1, 2, 3)) \
+                    + (1 - gamma) * torch.sum(torch.pow(reconstructed_X - real_img_X, 2), (1, 2, 3)))) / batch_size
+            else:
+                G_XtoYtoX_loss = torch.sum(torch.pow(real_img_X - reconstructed_X, 2)) / batch_size
 
-        writer.add_scalar('generator X to Y loss', G_XtoY_loss.item(), global_step=steps_done)
-        writer.add_scalar('generator Y to X loss', G_YtoX_loss.item(), global_step=steps_done)
-        writer.add_scalar('generator cycle consistency loss for X', G_XtoYtoX_loss.item(), global_step=steps_done)
-        writer.add_scalar('generator cycle consistency loss for Y', G_YtoXtoY_loss.item(), global_step=steps_done)
-        writer.add_scalar('total generator loss for X', G_X_loss.item(), global_step=steps_done)
-        writer.add_scalar('total generator loss for Y', G_Y_loss.item(), global_step=steps_done)
-        writer.add_scalar('total generator loss', G_loss.item(), global_step=steps_done)
+            G_X_loss = G_XtoY_loss + lambda_ * G_XtoYtoX_loss
 
-        if steps_done % 100 == 0:
-            log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, steps_done)
+            G_X_loss.backward()
+            G_opt.step()
 
-        steps_done += 1
+            G_loss = G_X_loss + G_Y_loss
+     
+            # logging scalars and weights
+            log_weights(G_XtoY, 'G_XtoY', steps_done)
+            log_weights(G_YtoX, 'G_YtoX', steps_done)
+
+            writer.add_scalar('generator X to Y loss', G_XtoY_loss.item(), global_step=steps_done)
+            writer.add_scalar('generator Y to X loss', G_YtoX_loss.item(), global_step=steps_done)
+            writer.add_scalar('generator cycle consistency loss for X', G_XtoYtoX_loss.item(), global_step=steps_done)
+            writer.add_scalar('generator cycle consistency loss for Y', G_YtoXtoY_loss.item(), global_step=steps_done)
+            writer.add_scalar('total generator loss for X', G_X_loss.item(), global_step=steps_done)
+            writer.add_scalar('total generator loss for Y', G_Y_loss.item(), global_step=steps_done)
+            writer.add_scalar('total generator loss', G_loss.item(), global_step=steps_done)
+
+            if steps_done % 100 == 0:
+                log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, steps_done)
+
+            steps_done += 1
+            bar.next()
+
+    ############################################################################
+    # Gamma and Lambda Scheduling
+    ############################################################################
+
+    if use_better_cycles:
+        lambda_ -= (lambda_start - lambda_end) / nb_epochs
+        gamma -= (gamma_start - gamma_end) / nb_epochs 
 
     ############################################################################
     # Model Checkpointing
     ############################################################################
 
-    if i_epoch != 0 and i_epoch % 50 == 0:
-        torch.save(G_XtoY.state_dict(), '../weights/{0}/G_XtoY.iter_{1}.pt'.format(run, i_epoch))
-        torch.save(G_YtoX.state_dict(), '../weights/{0}/G_YtoX.iter_{1}.pt'.format(run, i_epoch))
-        torch.save(D_X.state_dict(), '../weights/{0}/D_X.iter_{1}.pt'.format(run, i_epoch))
-        torch.save(D_Y.state_dict(), '../weights/{0}/D_Y.iter_{1}.pt'.format(run, i_epoch))
+    if i_epoch != 0 and i_epoch % 5 == 0:
+        torch.save(G_XtoY.state_dict(), '../weights/{0}/G_XtoY.epoch{1}.pt'.format(run, i_epoch))
+        torch.save(G_YtoX.state_dict(), '../weights/{0}/G_YtoX.epoch{1}.pt'.format(run, i_epoch))
+        torch.save(D_X.state_dict(), '../weights/{0}/D_X.epoch{1}.pt'.format(run, i_epoch))
+        torch.save(D_Y.state_dict(), '../weights/{0}/D_Y.epoch{1}.pt'.format(run, i_epoch))
 
 
 ################################################################################
