@@ -21,8 +21,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.optim.lr_scheduler import StepLR
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, Dataset
+from torchsummary import summary
 
 
 ################################################################################
@@ -30,7 +32,7 @@ from torch.utils.data import DataLoader, Dataset
 ################################################################################
 
 # format is date.run_number this day
-run = '060119.run01'
+run = '060219.run02'
 if not os.path.exists('../weights/{}'.format(run)):
     os.mkdir('../weights/{}'.format(run))
 if not os.path.exists('../logs/{}'.format(run)):
@@ -52,10 +54,10 @@ lambda_ = 10.
 use_noisy_labels = False
 noisy_p = 0.05
 should_halve_loss = True
-buffer_max_size = 40
+buffer_max_size = 50
 use_replay_buffer = True
 # https://ssnl.github.io/better_cycles/report.pdf
-use_better_cycles = True
+use_better_cycles = False
 gamma = 0.1
 gamma_start = gamma
 gamma_end = 0.95
@@ -106,7 +108,7 @@ class DualDomainDataset(Dataset):
         return max(len(self.datasetA), len(self.datasetB))
 
 train_data = DualDomainDataset(photo_data, sketch_data)
-train_loader = DataLoader(dataset=train_data, batch_size=batch_size, shuffle=True, drop_last=True)
+train_loader = DataLoader(dataset=train_data, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=8)
 
 
 ################################################################################
@@ -116,18 +118,18 @@ train_loader = DataLoader(dataset=train_data, batch_size=batch_size, shuffle=Tru
 class ResnetBlock(nn.Module):
     def __init__(self, dim):
         super().__init__()
-        self.conv1 = nn.Conv2d(dim, dim, 3, 1, 1)
+        self.pad1 = nn.ReflectionPad2d(1)
+        self.conv1 = nn.Conv2d(dim, dim, 3, 1, 0)
         self.norm1 = nn.InstanceNorm2d(dim)
         self.act1 = nn.LeakyReLU(0.2)
-        self.conv2 = nn.Conv2d(dim, dim, 3, 1, 1)
+        self.pad2 = nn.ReflectionPad2d(1)
+        self.conv2 = nn.Conv2d(dim, dim, 3, 1, 0)
         self.norm2 = nn.InstanceNorm2d(dim)
-        self.act2 = nn.LeakyReLU(0.2)
 
     def forward(self, x):
-        out = self.act1(self.norm1(self.conv1(x)))
-        out = self.norm2(self.conv2(out))
+        out = self.act1(self.norm1(self.conv1(self.pad1(x))))
+        out = self.norm2(self.conv2(self.pad2(out)))
         out = out + x
-        out = self.act2(out)
         return out
 
 class Generator(nn.Module):
@@ -135,13 +137,16 @@ class Generator(nn.Module):
         super().__init__()
        
         # encoder 
-        self.conv1 = nn.Conv2d(3, 64, 4, 2, 1)
+        self.pad1 = nn.ReflectionPad2d(1)
+        self.conv1 = nn.Conv2d(3, 64, 4, 2, 0)
         self.norm1 = nn.InstanceNorm2d(64)
         self.act1 = nn.LeakyReLU(0.2)
-        self.conv2 = nn.Conv2d(64, 128, 4, 2, 1)
+        self.pad2 = nn.ReflectionPad2d(1)
+        self.conv2 = nn.Conv2d(64, 128, 4, 2, 0)
         self.norm2 = nn.InstanceNorm2d(128)
         self.act2 = nn.LeakyReLU(0.2)
-        self.conv3 = nn.Conv2d(128, 256, 4, 2, 1)
+        self.pad3 = nn.ReflectionPad2d(1)
+        self.conv3 = nn.Conv2d(128, 256, 4, 2, 0)
         self.norm3 = nn.InstanceNorm2d(256)
         self.act3 = nn.LeakyReLU(0.2)
 
@@ -165,9 +170,9 @@ class Generator(nn.Module):
 
     def forward(self, x):
         # encoder
-        out = self.act1(self.norm1(self.conv1(x)))
-        out = self.act2(self.norm2(self.conv2(out)))
-        out = self.act3(self.norm3(self.conv3(out)))
+        out = self.act1(self.norm1(self.conv1(self.pad1(x))))
+        out = self.act2(self.norm2(self.conv2(self.pad2(out))))
+        out = self.act3(self.norm3(self.conv3(self.pad3(out))))
 
         # resnet
         out = self.resnet1(out)
@@ -204,7 +209,6 @@ class Discriminator(nn.Module):
 
         # apply a convolution to reduce depth to 1
         self.conv5 = nn.Conv2d(512, 1, 16, 1, 0)
-        self.act5 = nn.Sigmoid()
 
     def forward(self, x):
         out = self.act1(self.norm1(self.conv1(x)))
@@ -212,7 +216,6 @@ class Discriminator(nn.Module):
         out = self.act3(self.norm3(self.conv3(out)))
         feature_out = self.act4(self.norm4(self.conv4(out)))
         out = self.conv5(feature_out).squeeze().unsqueeze(1)
-        out = self.act5(out)
         return out, feature_out.detach()
 
 def init_weights(layer):
@@ -234,12 +237,21 @@ D_Y.apply(init_weights)
 G_opt = optim.Adam(list(G_XtoY.parameters()) + list(G_YtoX.parameters()), lr=lr, betas=betas)
 D_opt = optim.Adam(list(D_X.parameters()) + list(D_Y.parameters()), lr=lr, betas=betas)
 
+G_scheduler = StepLR(G_opt, 1, lr / 100.)
+D_scheduler = StepLR(D_opt, 1, lr / 100.)
+
+summary(G_XtoY, (3, 256, 256))
+summary(D_X, (3, 256, 256))
+
 
 ################################################################################
 # History buffer for old generated iamges
 ################################################################################
 
 class Buffer(object):
+    '''
+    based on: https://arxiv.org/pdf/1612.07828.pdf
+    '''
     def __init__(self, max_size):
         self.max_size = max_size
         self.buf = []
@@ -332,7 +344,14 @@ history = Buffer(buffer_max_size)
 from progress.bar import IncrementalBar
 
 for i_epoch in range(nb_epochs):
-    print('i_epoch: ', i_epoch)
+
+    print('i_epoch', i_epoch)
+    writer.add_scalar('lambda', lambda_, global_step=steps_done)
+    writer.add_scalar('gamma', gamma, global_step=steps_done)
+    if i_epoch > 99:
+        G_scheduler.step()
+        D_scheduler.step()
+
     with IncrementalBar('batches', max=len(train_loader)) as bar:
         for i_batch, data in enumerate(train_loader):
 
@@ -364,8 +383,8 @@ for i_epoch in range(nb_epochs):
             # real image loss
             D_opt.zero_grad()
 
-            real_X_pred, real_X_features = D_X(real_img_X)
-            real_Y_pred, real_Y_features = D_Y(real_img_Y)
+            real_X_pred, real_X_features = D_X(real_img_X.detach())
+            real_Y_pred, real_Y_features = D_Y(real_img_Y.detach())
             D_X_real_loss = torch.sum(torch.pow(real_X_pred - true_label, 2)) / batch_size
             D_Y_real_loss = torch.sum(torch.pow(real_Y_pred - true_label, 2)) / batch_size
 
@@ -379,12 +398,12 @@ for i_epoch in range(nb_epochs):
             D_opt.step()
 
             # generating fake images
-            fake_img_X = G_YtoX(real_img_Y)
-            fake_img_Y = G_XtoY(real_img_X)
+            fake_img_X = G_YtoX(real_img_Y.detach())
+            fake_img_Y = G_XtoY(real_img_X.detach())
 
             if use_replay_buffer:
-                fake_img_X = history.push(fake_img_X).detach()
-                fake_img_Y = history.push(fake_img_Y).detach()
+                fake_img_X = history.push(fake_img_X)
+                fake_img_Y = history.push(fake_img_Y)
 
                 assert fake_img_X.shape == fake_img_Y.shape, 'mismatch in data shape from buffer'
                 assert fake_img_X.shape == real_img_X.shape, 'incorrect shape returned from buffer'
@@ -392,8 +411,8 @@ for i_epoch in range(nb_epochs):
             # fake image loss
             D_opt.zero_grad()
 
-            fake_X_pred, _ = D_X(fake_img_X)
-            fake_Y_pred, _ = D_Y(fake_img_Y)
+            fake_X_pred, _ = D_X(fake_img_X.detach())
+            fake_Y_pred, _ = D_Y(fake_img_Y.detach())
             D_X_fake_loss = torch.sum(torch.pow(fake_X_pred - fake_label, 2)) / batch_size
             D_Y_fake_loss = torch.sum(torch.pow(fake_Y_pred - fake_label, 2)) / batch_size
 
@@ -429,8 +448,8 @@ for i_epoch in range(nb_epochs):
 
             # Y to X to Y
             G_opt.zero_grad()
-                
-            fake_img_X = G_YtoX(real_img_Y)
+ 
+            fake_img_X = G_YtoX(real_img_Y.detach())
 
             fake_X_pred, _ = D_X(fake_img_X)
             G_YtoX_loss = torch.sum(torch.pow(fake_X_pred - true_label, 2)) / batch_size
@@ -438,13 +457,13 @@ for i_epoch in range(nb_epochs):
             reconstructed_Y = G_XtoY(fake_img_X)
             if use_better_cycles:
                 _, reconstructed_Y_features = D_Y(reconstructed_Y)
-                real_Y_pred = real_Y_pred.detach()
+                real_Y_pred = torch.sigmoid(real_Y_pred.detach())
 
                 G_YtoXtoY_loss = torch.sum(real_Y_pred \
-                    * (gamma * torch.sum(torch.pow(reconstructed_Y_features - real_Y_features, 2), (1, 2, 3)) \
-                    + (1 - gamma) * torch.sum(torch.pow(reconstructed_Y - real_img_Y, 2), (1, 2, 3)))) / batch_size
+                    * (gamma * torch.sum(torch.abs(reconstructed_Y_features - real_Y_features), (1, 2, 3)) \
+                    + (1 - gamma) * torch.sum(torch.abs(reconstructed_Y - real_img_Y), (1, 2, 3)))) / batch_size
             else:
-                G_YtoXtoY_loss = torch.sum(torch.pow(real_img_Y - reconstructed_Y, 2)) / batch_size
+                G_YtoXtoY_loss = torch.sum(torch.abs(real_img_Y - reconstructed_Y)) / batch_size
 
             G_Y_loss = G_YtoX_loss + lambda_ * G_YtoXtoY_loss
 
@@ -454,7 +473,7 @@ for i_epoch in range(nb_epochs):
             # X to Y to X 
             G_opt.zero_grad()
 
-            fake_img_Y = G_XtoY(real_img_X)
+            fake_img_Y = G_XtoY(real_img_X.detach())
 
             fake_Y_pred, _ = D_Y(fake_img_Y)
             G_XtoY_loss = torch.sum(torch.pow(fake_Y_pred - true_label, 2)) / batch_size
@@ -462,13 +481,13 @@ for i_epoch in range(nb_epochs):
             reconstructed_X = G_YtoX(fake_img_Y)
             if use_better_cycles:
                 _, reconstructed_X_features = D_X(reconstructed_X)
-                real_X_pred = real_X_pred.detach()
+                real_X_pred = torch.sigmoid(real_X_pred.detach())
 
                 G_XtoYtoX_loss = torch.sum(real_X_pred \
-                    * (gamma * torch.sum(torch.pow(reconstructed_X_features - real_X_features, 2), (1, 2, 3)) \
-                    + (1 - gamma) * torch.sum(torch.pow(reconstructed_X - real_img_X, 2), (1, 2, 3)))) / batch_size
+                    * (gamma * torch.sum(torch.abs(reconstructed_X_features - real_X_features), (1, 2, 3)) \
+                    + (1 - gamma) * torch.sum(torch.abs(reconstructed_X - real_img_X), (1, 2, 3)))) / batch_size
             else:
-                G_XtoYtoX_loss = torch.sum(torch.pow(real_img_X - reconstructed_X, 2)) / batch_size
+                G_XtoYtoX_loss = torch.sum(torch.abs(real_img_X - reconstructed_X)) / batch_size
 
             G_X_loss = G_XtoY_loss + lambda_ * G_XtoYtoX_loss
 
@@ -489,7 +508,7 @@ for i_epoch in range(nb_epochs):
             writer.add_scalar('total generator loss for Y', G_Y_loss.item(), global_step=steps_done)
             writer.add_scalar('total generator loss', G_loss.item(), global_step=steps_done)
 
-            if steps_done % 100 == 0:
+            if steps_done % 50 == 0:
                 log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, steps_done)
 
             steps_done += 1
@@ -501,13 +520,13 @@ for i_epoch in range(nb_epochs):
 
     if use_better_cycles:
         lambda_ -= (lambda_start - lambda_end) / nb_epochs
-        gamma -= (gamma_start - gamma_end) / nb_epochs 
+        gamma += (gamma_end - gamma_start) / nb_epochs
 
     ############################################################################
     # Model Checkpointing
     ############################################################################
 
-    if i_epoch != 0 and i_epoch % 5 == 0:
+    if i_epoch != 0 and i_epoch % 2 == 0:
         torch.save(G_XtoY.state_dict(), '../weights/{0}/G_XtoY.epoch{1}.pt'.format(run, i_epoch))
         torch.save(G_YtoX.state_dict(), '../weights/{0}/G_YtoX.epoch{1}.pt'.format(run, i_epoch))
         torch.save(D_X.state_dict(), '../weights/{0}/D_X.epoch{1}.pt'.format(run, i_epoch))
@@ -522,4 +541,3 @@ torch.save(G_XtoY.state_dict(), '../weights/{0}/G_XtoY.pt'.format(run))
 torch.save(G_YtoX.state_dict(), '../weights/{0}/G_YtoX.pt'.format(run))
 torch.save(D_X.state_dict(), '../weights/{0}/D_X.pt'.format(run))
 torch.save(D_Y.state_dict(), '../weights/{0}/D_Y.pt'.format(run))
-
