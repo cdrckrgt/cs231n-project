@@ -32,7 +32,7 @@ from torchsummary import summary
 ################################################################################
 
 # format is date.run_number this day
-run = '060219.run05'
+run = '060219.run06'
 if not os.path.exists('../weights/{}'.format(run)):
     os.mkdir('../weights/{}'.format(run))
 if not os.path.exists('../logs/{}'.format(run)):
@@ -215,8 +215,10 @@ class Discriminator(nn.Module):
         out = self.act2(self.norm2(self.conv2(out)))
         out = self.act3(self.norm3(self.conv3(out)))
         feature_out = self.act4(self.norm4(self.conv4(out)))
-        out = self.conv5(feature_out).squeeze().unsqueeze(1)
+        out = self.conv5(feature_out)        
+        out = out.squeeze(1).squeeze(1)
         return out, feature_out.detach()
+
 
 def init_weights(layer):
     if isinstance(layer, nn.Conv2d) or isinstance(layer, nn.ConvTranspose2d):
@@ -473,9 +475,9 @@ for i_epoch in range(nb_epochs):
 
                 G_YtoXtoY_loss = torch.sum(real_Y_pred \
                     * (gamma * torch.sum(torch.abs(reconstructed_Y_features - real_Y_features), (1, 2, 3)) \
-                    + (1 - gamma) * torch.sum(torch.abs(reconstructed_Y - real_img_Y), (1, 2, 3)))) / batch_size
+                    + (1 - gamma) * torch.sum(torch.abs(reconstructed_Y - real_img_Y), (1, 2, 3)))) / (batch_size * 3 * 256 * 256)
             else:
-                G_YtoXtoY_loss = torch.sum(torch.abs(real_img_Y - reconstructed_Y)) / batch_size
+                G_YtoXtoY_loss = torch.sum(torch.abs(real_img_Y - reconstructed_Y)) / (batch_size * 3 * 256 * 256)
 
             G_Y_loss = G_YtoX_loss + lambda_ * G_YtoXtoY_loss
 
@@ -497,9 +499,9 @@ for i_epoch in range(nb_epochs):
 
                 G_XtoYtoX_loss = torch.sum(real_X_pred \
                     * (gamma * torch.sum(torch.abs(reconstructed_X_features - real_X_features), (1, 2, 3)) \
-                    + (1 - gamma) * torch.sum(torch.abs(reconstructed_X - real_img_X), (1, 2, 3)))) / batch_size
+                    + (1 - gamma) * torch.sum(torch.abs(reconstructed_X - real_img_X), (1, 2, 3)))) / (batch_size * 3 * 256 * 256)
             else:
-                G_XtoYtoX_loss = torch.sum(torch.abs(real_img_X - reconstructed_X)) / batch_size
+                G_XtoYtoX_loss = torch.sum(torch.abs(real_img_X - reconstructed_X)) / (batch_size * 3 * 256 * 256)
 
             G_X_loss = G_XtoY_loss + lambda_ * G_XtoYtoX_loss
 
@@ -546,7 +548,7 @@ for i_epoch in range(nb_epochs):
     # Model Checkpointing
     ############################################################################
 
-    if i_epoch != 0 and i_epoch % 2 == 0:
+    if i_epoch != 0 and i_epoch % 5 == 0:
         torch.save(G_XtoY.state_dict(), '../weights/{0}/G_XtoY.epoch{1}.pt'.format(run, i_epoch))
         torch.save(G_YtoX.state_dict(), '../weights/{0}/G_YtoX.epoch{1}.pt'.format(run, i_epoch))
         torch.save(D_X.state_dict(), '../weights/{0}/D_X.epoch{1}.pt'.format(run, i_epoch))
