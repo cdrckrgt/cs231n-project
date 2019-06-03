@@ -32,7 +32,7 @@ from torchsummary import summary
 ################################################################################
 
 # format is date.run_number this day
-run = '060219.run06'
+run = '060219.run09'
 if not os.path.exists('../weights/{}'.format(run)):
     os.mkdir('../weights/{}'.format(run))
 if not os.path.exists('../logs/{}'.format(run)):
@@ -45,11 +45,13 @@ writer = SummaryWriter('../logs/{}'.format(run))
 # Setting hyperparameters
 ################################################################################
 
-batch_size = 1
+batch_size = 4
+nrows = 2
+ncols = 2
 nb_epochs = 200
 lr = 2e-4
 betas = (0.5, 0.999)
-use_label_smoothing = True
+use_label_smoothing = False
 lambda_ = 10.
 use_noisy_labels = False
 noisy_p = 0.05
@@ -66,6 +68,8 @@ lambda_end = 0.0
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 dtype = torch.cuda.FloatTensor if device == 'cuda' else torch.FloatTensor
+
+debug_weights = False
 
 
 ################################################################################
@@ -108,7 +112,7 @@ class DualDomainDataset(Dataset):
         return max(len(self.datasetA), len(self.datasetB))
 
 train_data = DualDomainDataset(photo_data, sketch_data)
-train_loader = DataLoader(dataset=train_data, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=16, pin_memory=True)
+train_loader = DataLoader(dataset=train_data, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=32, pin_memory=True)
 
 
 ################################################################################
@@ -121,7 +125,7 @@ class ResnetBlock(nn.Module):
         self.pad1 = nn.ReflectionPad2d(1)
         self.conv1 = nn.Conv2d(dim, dim, 3, 1, 0)
         self.norm1 = nn.InstanceNorm2d(dim)
-        self.act1 = nn.LeakyReLU(0.2)
+        self.act1 = nn.ReLU()
         self.pad2 = nn.ReflectionPad2d(1)
         self.conv2 = nn.Conv2d(dim, dim, 3, 1, 0)
         self.norm2 = nn.InstanceNorm2d(dim)
@@ -135,44 +139,46 @@ class ResnetBlock(nn.Module):
 class Generator(nn.Module):
     def __init__(self):
         super().__init__()
-       
+ 
         # encoder 
-        self.pad1 = nn.ReflectionPad2d(1)
-        self.conv1 = nn.Conv2d(3, 64, 4, 2, 0)
+        self.pad1 = nn.ReflectionPad2d(3)
+        self.conv1 = nn.Conv2d(3, 64, 7, 1, 0) # 3 x 256 x 256 => 64 x 256 x 256
         self.norm1 = nn.InstanceNorm2d(64)
-        self.act1 = nn.LeakyReLU(0.2)
-        self.pad2 = nn.ReflectionPad2d(1)
-        self.conv2 = nn.Conv2d(64, 128, 4, 2, 0)
+        self.act1 = nn.ReLU()
+        self.conv2 = nn.Conv2d(64, 128, 3, 2, 1) # 64 x 256 x 256 => 128 x 256 x 256
         self.norm2 = nn.InstanceNorm2d(128)
-        self.act2 = nn.LeakyReLU(0.2)
-        self.pad3 = nn.ReflectionPad2d(1)
-        self.conv3 = nn.Conv2d(128, 256, 4, 2, 0)
+        self.act2 = nn.ReLU()
+        self.conv3 = nn.Conv2d(128, 256, 3, 2, 1) # 128 x 256 x 256 => 256 x 256 x 256
         self.norm3 = nn.InstanceNorm2d(256)
-        self.act3 = nn.LeakyReLU(0.2)
+        self.act3 = nn.ReLU()
 
-        # resnet
+        # transformer
         self.resnet1 = ResnetBlock(256)
         self.resnet2 = ResnetBlock(256)
         self.resnet3 = ResnetBlock(256)
         self.resnet4 = ResnetBlock(256)
         self.resnet5 = ResnetBlock(256)
         self.resnet6 = ResnetBlock(256)
+        self.resnet7 = ResnetBlock(256)
+        self.resnet8 = ResnetBlock(256)
+        self.resnet9 = ResnetBlock(256)
         
         # decoder
-        self.convT1 = nn.ConvTranspose2d(256, 128, 4, 2, 1)
+        self.convT1 = nn.ConvTranspose2d(256, 128, 3, 2, 1, 1)
         self.norm4 = nn.InstanceNorm2d(128)
         self.act13 = nn.ReLU()
-        self.convT2 = nn.ConvTranspose2d(128, 64, 4, 2, 1)
+        self.convT2 = nn.ConvTranspose2d(128, 64, 3, 2, 1, 1)
         self.norm5 = nn.InstanceNorm2d(64)
         self.act14 = nn.ReLU()
-        self.convT3 = nn.ConvTranspose2d(64, 3, 4, 2, 1)
+        self.pad2 = nn.ReflectionPad2d(3)
+        self.conv4 = nn.Conv2d(64, 3, 7, 1, 0)
         self.act15 = nn.Tanh()
 
     def forward(self, x):
         # encoder
         out = self.act1(self.norm1(self.conv1(self.pad1(x))))
-        out = self.act2(self.norm2(self.conv2(self.pad2(out))))
-        out = self.act3(self.norm3(self.conv3(self.pad3(out))))
+        out = self.act2(self.norm2(self.conv2(out)))
+        out = self.act3(self.norm3(self.conv3(out)))
 
         # resnet
         out = self.resnet1(out)
@@ -181,11 +187,14 @@ class Generator(nn.Module):
         out = self.resnet4(out)
         out = self.resnet5(out)
         out = self.resnet6(out)
+        out = self.resnet7(out)
+        out = self.resnet8(out)
+        out = self.resnet9(out)
 
         # decoder
         out = self.act13(self.norm4(self.convT1(out)))
         out = self.act14(self.norm5(self.convT2(out)))
-        out = self.act15(self.convT3(out))
+        out = self.act15(self.conv4(self.pad2(out)))
         return out
 
 class Discriminator(nn.Module):
@@ -194,31 +203,29 @@ class Discriminator(nn.Module):
     '''
     def __init__(self):
         super().__init__()
-        self.conv1 = nn.Conv2d(3, 64, 4, 2, 1)
+        self.conv1 = nn.Conv2d(3, 64, 4, 2, 1) # 3 x 256 x 256 => 64 x 128 x 128
         self.norm1 = nn.InstanceNorm2d(64)
         self.act1 = nn.LeakyReLU(0.2)
-        self.conv2 = nn.Conv2d(64, 128, 4, 2, 1)
+        self.conv2 = nn.Conv2d(64, 128, 4, 2, 1) # 64 x 128 x 128 => 128 x 64 x 64
         self.norm2 = nn.InstanceNorm2d(128)
         self.act2 = nn.LeakyReLU(0.2)
-        self.conv3 = nn.Conv2d(128, 256, 4, 2, 1)
+        self.conv3 = nn.Conv2d(128, 256, 4, 2, 1) # 128 x 64 x 64 => 256 x 32 x 32
         self.norm3 = nn.InstanceNorm2d(256)
         self.act3 = nn.LeakyReLU(0.2)
-        self.conv4 = nn.Conv2d(256, 512, 4, 2, 1)
+        self.conv4 = nn.Conv2d(256, 512, 4, 1, 1) # 256 x 32 x 32 => 512 x 31 x 31
         self.norm4 = nn.InstanceNorm2d(512)
         self.act4 = nn.LeakyReLU(0.2)
 
         # apply a convolution to reduce depth to 1
-        self.conv5 = nn.Conv2d(512, 1, 16, 1, 0)
+        self.conv5 = nn.Conv2d(512, 1, 4, 1, 1) # 512 x 31 x 31 => 1 x 30 x 30
 
     def forward(self, x):
         out = self.act1(self.norm1(self.conv1(x)))
         out = self.act2(self.norm2(self.conv2(out)))
         out = self.act3(self.norm3(self.conv3(out)))
         feature_out = self.act4(self.norm4(self.conv4(out)))
-        out = self.conv5(feature_out)        
-        out = out.squeeze(1).squeeze(1)
+        out = self.conv5(feature_out) 
         return out, feature_out.detach()
-
 
 def init_weights(layer):
     if isinstance(layer, nn.Conv2d) or isinstance(layer, nn.ConvTranspose2d):
@@ -241,6 +248,11 @@ D_opt = optim.Adam(list(D_X.parameters()) + list(D_Y.parameters()), lr=lr, betas
 
 G_scheduler = StepLR(G_opt, 1, lr / 100.)
 D_scheduler = StepLR(D_opt, 1, lr / 100.)
+
+D_output_shape = (batch_size, 1, 30, 30)
+D_criterion = nn.MSELoss()
+G_criterion = nn.MSELoss()
+cycle_criterion = nn.L1Loss()
 
 summary(G_XtoY, (3, 256, 256))
 summary(D_X, (3, 256, 256))
@@ -276,16 +288,16 @@ class Buffer(object):
 
 
 ################################################################################
-# Auxilliary functions for visualization in Tensorboard
+# Auxilliary functions 
 ################################################################################
 
-def merge_images(sources, targets):
+def merge_images(sources, targets, row_x, row_y):
     _, _, h, w = sources.shape
-    row = int(np.sqrt(batch_size))
-    merged = np.zeros([3, row * h, row * w * 2])
+    assert row_x * row_y == batch_size, 'incorrect number of rows or columns for tensorboard image creation'
+    merged = np.zeros([3, row_x * h, row_y * w * 2])
     for idx, (s, t) in enumerate(zip(sources, targets)):
-        i = idx // row
-        j = idx % row
+        i = idx // row_x
+        j = idx % row_y
         merged[:, i * h:(i + 1) * h, (j * 2) * h:(j * 2 + 1) * h] = s
         merged[:, i * h:(i + 1) * h, (j * 2 + 1) * h:(j * 2 + 2) * h] = t
     return merged
@@ -298,6 +310,9 @@ def denorm_for_print(image):
 
 def log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, steps_done, save=False):
 
+    set_grad(G_XtoY, False)
+    set_grad(G_YtoX, False)
+
     monitor_X = monitor_X.detach()
     monitor_Y = monitor_Y.detach()
 
@@ -309,10 +324,10 @@ def log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, steps_done, save=False):
     Y = denorm_for_print(monitor_Y)
     fake_X = denorm_for_print(fake_X)
 
-    merged_XtoY = merge_images(X, fake_Y)
+    merged_XtoY = merge_images(X, fake_Y, nrows, ncols)
     writer.add_image('X, generated Y', merged_XtoY, global_step=steps_done)
 
-    merged_YtoX = merge_images(Y, fake_X)
+    merged_YtoX = merge_images(Y, fake_X, nrows, ncols)
     writer.add_image('Y, generated X', merged_YtoX, global_step=steps_done)
 
     if save:
@@ -328,6 +343,10 @@ def log_weights(model, which, steps_done):
     for layer, weights in params.items():
         if 'conv' in layer:
             writer.add_histogram('{}.{}'.format(which, layer), weights, global_step=steps_done)
+
+def set_grad(model, requires_grad):
+    for param in model.parameters():
+        param.requires_grad = requires_grad
 
 
 ################################################################################
@@ -354,6 +373,7 @@ for i_epoch in range(nb_epochs):
     print('i_epoch', i_epoch)
     writer.add_scalar('lambda', lambda_, global_step=steps_done)
     writer.add_scalar('gamma', gamma, global_step=steps_done)
+
     if i_epoch > 99:
         G_scheduler.step()
         D_scheduler.step()
@@ -377,22 +397,28 @@ for i_epoch in range(nb_epochs):
             # Discriminator Loss
             ########################################################################
 
+            set_grad(G_XtoY, False) # we save computation by setting these to no grad
+            set_grad(G_YtoX, False)
+            set_grad(D_X, True)
+            set_grad(D_Y, True)
+
             # label smoothing adds noise to discriminator training, weakens D 
-            true_label = 1
-            fake_label = 0
+            true_label = torch.ones(D_output_shape).to(device)
+            fake_label = torch.zeros(D_output_shape).to(device)
             if use_label_smoothing:
-                true_label = torch.tensor(np.random.uniform(low=0.7, high=1.2, size=(batch_size, 1))).to(device).float()
-                fake_label = torch.tensor(np.random.uniform(low=0.0, high=0.3, size=(batch_size, 1))).to(device).float()
+                true_label = torch.tensor(np.random.uniform(low=0.7, high=1.2, size=D_output_shape)).to(device).float()
+                fake_label = torch.tensor(np.random.uniform(low=0.0, high=0.3, size=D_output_shape)).to(device).float()
             if use_noisy_labels and np.random.rand() < noisy_p:
                 true_label, fake_label = fake_label, true_label
 
             # real image loss
             D_opt.zero_grad()
 
-            real_X_pred, real_X_features = D_X(real_img_X.detach())
-            real_Y_pred, real_Y_features = D_Y(real_img_Y.detach())
-            D_X_real_loss = torch.sum(torch.pow(real_X_pred - true_label, 2)) / batch_size
-            D_Y_real_loss = torch.sum(torch.pow(real_Y_pred - true_label, 2)) / batch_size
+            real_X_pred, real_X_features = D_X(real_img_X)
+            real_Y_pred, real_Y_features = D_Y(real_img_Y)
+
+            D_X_real_loss = D_criterion(real_X_pred, true_label)
+            D_Y_real_loss = D_criterion(real_Y_pred, true_label)
 
             D_real_loss = D_X_real_loss + D_Y_real_loss
 
@@ -404,8 +430,8 @@ for i_epoch in range(nb_epochs):
             D_opt.step()
 
             # generating fake images
-            fake_img_X = G_YtoX(real_img_Y.detach())
-            fake_img_Y = G_XtoY(real_img_X.detach())
+            fake_img_X = G_YtoX(real_img_Y)
+            fake_img_Y = G_XtoY(real_img_X)
 
             if use_replay_buffer:
                 fake_img_X = history.push(fake_img_X)
@@ -417,10 +443,11 @@ for i_epoch in range(nb_epochs):
             # fake image loss
             D_opt.zero_grad()
 
-            fake_X_pred, _ = D_X(fake_img_X.detach())
-            fake_Y_pred, _ = D_Y(fake_img_Y.detach())
-            D_X_fake_loss = torch.sum(torch.pow(fake_X_pred - fake_label, 2)) / batch_size
-            D_Y_fake_loss = torch.sum(torch.pow(fake_Y_pred - fake_label, 2)) / batch_size
+            fake_X_pred, _ = D_X(fake_img_X)
+            fake_Y_pred, _ = D_Y(fake_img_Y)
+
+            D_X_fake_loss = D_criterion(fake_X_pred, fake_label)
+            D_Y_fake_loss = D_criterion(fake_Y_pred, fake_label)
 
             D_fake_loss = D_X_fake_loss + D_Y_fake_loss
 
@@ -433,9 +460,9 @@ for i_epoch in range(nb_epochs):
 
             D_loss = D_real_loss + D_fake_loss
 
-            # logging scalars and weights
-            # log_weights(D_X, 'D_X', steps_done)
-            # log_weights(D_Y, 'D_Y', steps_done)
+            if debug_weights:
+                log_weights(D_X, 'D_X', steps_done)
+                log_weights(D_Y, 'D_Y', steps_done)
 
             writer.add_scalar('discriminator loss on real X', D_X_real_loss.item(), global_step=steps_done)
             writer.add_scalar('discriminator loss on real Y', D_Y_real_loss.item(), global_step=steps_done)
@@ -457,27 +484,32 @@ for i_epoch in range(nb_epochs):
             # Generator Loss
             ########################################################################
 
-            true_label = 1
-            fake_label = 0
+            set_grad(G_XtoY, True) # we save computation by setting these to no grad
+            set_grad(G_YtoX, True)
+            set_grad(D_X, False)
+            set_grad(D_Y, False)
+
+            true_label = torch.ones(D_output_shape).to(device)
+            fake_label = torch.zeros(D_output_shape).to(device)
 
             # Y to X to Y
             G_opt.zero_grad()
  
-            fake_img_X = G_YtoX(real_img_Y.detach())
+            fake_img_X = G_YtoX(real_img_Y)
 
             fake_X_pred, _ = D_X(fake_img_X)
-            G_YtoX_loss = torch.sum(torch.pow(fake_X_pred - true_label, 2)) / batch_size
+            G_YtoX_loss = G_criterion(fake_X_pred, true_label)
 
             reconstructed_Y = G_XtoY(fake_img_X)
             if use_better_cycles:
                 _, reconstructed_Y_features = D_Y(reconstructed_Y)
-                real_Y_pred = torch.sigmoid(real_Y_pred.detach())
+                real_Y_pred = torch.sigmoid(real_Y_pred)
 
                 G_YtoXtoY_loss = torch.sum(real_Y_pred \
                     * (gamma * torch.sum(torch.abs(reconstructed_Y_features - real_Y_features), (1, 2, 3)) \
                     + (1 - gamma) * torch.sum(torch.abs(reconstructed_Y - real_img_Y), (1, 2, 3)))) / (batch_size * 3 * 256 * 256)
             else:
-                G_YtoXtoY_loss = torch.sum(torch.abs(real_img_Y - reconstructed_Y)) / (batch_size * 3 * 256 * 256)
+                G_YtoXtoY_loss = cycle_criterion(real_img_Y, reconstructed_Y)
 
             G_Y_loss = G_YtoX_loss + lambda_ * G_YtoXtoY_loss
 
@@ -487,21 +519,21 @@ for i_epoch in range(nb_epochs):
             # X to Y to X 
             G_opt.zero_grad()
 
-            fake_img_Y = G_XtoY(real_img_X.detach())
+            fake_img_Y = G_XtoY(real_img_X)
 
             fake_Y_pred, _ = D_Y(fake_img_Y)
-            G_XtoY_loss = torch.sum(torch.pow(fake_Y_pred - true_label, 2)) / batch_size
+            G_XtoY_loss = G_criterion(fake_Y_pred, true_label)
 
             reconstructed_X = G_YtoX(fake_img_Y)
             if use_better_cycles:
                 _, reconstructed_X_features = D_X(reconstructed_X)
-                real_X_pred = torch.sigmoid(real_X_pred.detach())
+                real_X_pred = torch.sigmoid(real_X_pred)
 
                 G_XtoYtoX_loss = torch.sum(real_X_pred \
                     * (gamma * torch.sum(torch.abs(reconstructed_X_features - real_X_features), (1, 2, 3)) \
                     + (1 - gamma) * torch.sum(torch.abs(reconstructed_X - real_img_X), (1, 2, 3)))) / (batch_size * 3 * 256 * 256)
             else:
-                G_XtoYtoX_loss = torch.sum(torch.abs(real_img_X - reconstructed_X)) / (batch_size * 3 * 256 * 256)
+                G_XtoYtoX_loss = cycle_criterion(real_img_X, reconstructed_X)
 
             G_X_loss = G_XtoY_loss + lambda_ * G_XtoYtoX_loss
 
@@ -510,9 +542,9 @@ for i_epoch in range(nb_epochs):
 
             G_loss = G_X_loss + G_Y_loss
      
-            # logging scalars and weights
-            # log_weights(G_XtoY, 'G_XtoY', steps_done)
-            # log_weights(G_YtoX, 'G_YtoX', steps_done)
+            if debug_weights:
+                log_weights(G_XtoY, 'G_XtoY', steps_done)
+                log_weights(G_YtoX, 'G_YtoX', steps_done)
 
             writer.add_scalar('generator X to Y loss', G_XtoY_loss.item(), global_step=steps_done)
             writer.add_scalar('generator Y to X loss', G_YtoX_loss.item(), global_step=steps_done)
@@ -530,7 +562,7 @@ for i_epoch in range(nb_epochs):
             del G_Y_loss
             del G_loss
 
-            if steps_done % 50 == 0:
+            if steps_done % 500 == 0:
                 log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, steps_done)
 
             steps_done += 1
