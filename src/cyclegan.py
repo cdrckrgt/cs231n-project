@@ -32,7 +32,7 @@ from torchsummary import summary
 ################################################################################
 
 # format is date.run_number this day
-run = '060219.run09'
+run = '060219.run10'
 if not os.path.exists('../weights/{}'.format(run)):
     os.mkdir('../weights/{}'.format(run))
 if not os.path.exists('../logs/{}'.format(run)):
@@ -45,8 +45,8 @@ writer = SummaryWriter('../logs/{}'.format(run))
 # Setting hyperparameters
 ################################################################################
 
-batch_size = 4
-nrows = 2
+batch_size = 8
+nrows = 4
 ncols = 2
 nb_epochs = 200
 lr = 2e-4
@@ -165,20 +165,18 @@ class Generator(nn.Module):
         
         # decoder
         # https://distill.pub/2016/deconv-checkerboard/
-        # self.convT1 = nn.ConvTranspose2d(256, 128, 3, 2, 1, 1) # 256 x 64 x 64 => 128 x 128 x 128
         self.up1 = nn.Upsample(scale_factor=2) # 256 x 256 x 256 => 256 x 512 x 512
         self.pad2 = nn.ReflectionPad2d(1)
         self.conv4 = nn.Conv2d(256, 128, 3, 1, 0) # 256 x 512 x 512 => 128 x 256 x 256
         self.norm4 = nn.InstanceNorm2d(128)
         self.act13 = nn.ReLU()
-        # self.convT2 = nn.ConvTranspose2d(128, 64, 3, 2, 1, 1) # 128 x 128 x 128 => 64 x 256 x 256
         self.up2 = nn.Upsample(scale_factor=2) # 128 x 256 x 256 => 128 x 512 x 512
         self.pad3 = nn.ReflectionPad2d(1)
         self.conv5 = nn.Conv2d(128, 64, 3, 1, 0) # 128 x 512 x 512 => 64 x 256 x 256
         self.norm5 = nn.InstanceNorm2d(64)
         self.act14 = nn.ReLU()
         self.pad4 = nn.ReflectionPad2d(3)
-        self.conv4 = nn.Conv2d(64, 3, 7, 1, 0) # 64 x 256 x 256 => 3 x 256 x 256
+        self.conv6 = nn.Conv2d(64, 3, 7, 1, 0) # 64 x 256 x 256 => 3 x 256 x 256
         self.act15 = nn.Tanh()
 
     def forward(self, x):
@@ -187,7 +185,7 @@ class Generator(nn.Module):
         out = self.act2(self.norm2(self.conv2(out)))
         out = self.act3(self.norm3(self.conv3(out)))
 
-        # resnet
+        # transformer
         out = self.resnet1(out)
         out = self.resnet2(out)
         out = self.resnet3(out)
@@ -199,11 +197,9 @@ class Generator(nn.Module):
         out = self.resnet9(out)
 
         # decoder
-        # out = self.act13(self.norm4(self.convT1(out)))
-        # out = self.act14(self.norm5(self.convT2(out)))
-        out = self.act13(self.norm4(self.conv4(self.pad2(self.up1(x)))))
-        out = self.act14(self.norm5(self.conv5(self.pad3(self.up2(x)))))
-        out = self.act15(self.conv4(self.pad4(out)))
+        out = self.act13(self.norm4(self.conv4(self.pad2(self.up1(out)))))
+        out = self.act14(self.norm5(self.conv5(self.pad3(self.up2(out)))))
+        out = self.act15(self.conv6(self.pad4(out)))
         return out
 
 class Discriminator(nn.Module):
@@ -304,9 +300,9 @@ def merge_images(sources, targets, row_x, row_y):
     _, _, h, w = sources.shape
     assert row_x * row_y == batch_size, 'incorrect number of rows or columns for tensorboard image creation'
     merged = np.zeros([3, row_x * h, row_y * w * 2])
+    indices = [(i, j) for i in range(row_x) for j in range(row_y)]
     for idx, (s, t) in enumerate(zip(sources, targets)):
-        i = idx // row_x
-        j = idx % row_y
+        i, j = indices[idx]
         merged[:, i * h:(i + 1) * h, (j * 2) * h:(j * 2 + 1) * h] = s
         merged[:, i * h:(i + 1) * h, (j * 2 + 1) * h:(j * 2 + 2) * h] = t
     return merged
@@ -571,7 +567,7 @@ for i_epoch in range(nb_epochs):
             del G_Y_loss
             del G_loss
 
-            if steps_done % 500 == 0:
+            if steps_done % 50 == 0:
                 log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, steps_done)
 
             steps_done += 1
