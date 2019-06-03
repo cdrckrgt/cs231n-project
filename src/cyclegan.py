@@ -32,7 +32,7 @@ from torchsummary import summary
 ################################################################################
 
 # format is date.run_number this day
-run = '060219.run02'
+run = '060219.run05'
 if not os.path.exists('../weights/{}'.format(run)):
     os.mkdir('../weights/{}'.format(run))
 if not os.path.exists('../logs/{}'.format(run)):
@@ -45,7 +45,7 @@ writer = SummaryWriter('../logs/{}'.format(run))
 # Setting hyperparameters
 ################################################################################
 
-batch_size = 4
+batch_size = 1
 nb_epochs = 200
 lr = 2e-4
 betas = (0.5, 0.999)
@@ -86,8 +86,8 @@ transform_photo = transforms.Compose([
     transforms.Normalize((0.5,0.5,0.5), (0.5,0.5,0.5)),
 ])
 
-photo_data = datasets.ImageFolder('../data/sketchydata/photo/', transform_photo)
-sketch_data = datasets.ImageFolder('../data/sketchydata/sketch/', transform_sketch)
+photo_data = datasets.ImageFolder('../data/sketchydata_tight/photo/', transform_photo)
+sketch_data = datasets.ImageFolder('../data/sketchydata_tight/sketch/', transform_sketch)
 
 class DualDomainDataset(Dataset):
     def __init__(self, datasetA, datasetB):
@@ -108,7 +108,7 @@ class DualDomainDataset(Dataset):
         return max(len(self.datasetA), len(self.datasetB))
 
 train_data = DualDomainDataset(photo_data, sketch_data)
-train_loader = DataLoader(dataset=train_data, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=8)
+train_loader = DataLoader(dataset=train_data, batch_size=batch_size, shuffle=True, drop_last=True, num_workers=16, pin_memory=True)
 
 
 ################################################################################
@@ -154,9 +154,9 @@ class Generator(nn.Module):
         self.resnet1 = ResnetBlock(256)
         self.resnet2 = ResnetBlock(256)
         self.resnet3 = ResnetBlock(256)
-        # self.resnet4 = ResnetBlock(256)
-        # self.resnet5 = ResnetBlock(256)
-        # self.resnet6 = ResnetBlock(256)
+        self.resnet4 = ResnetBlock(256)
+        self.resnet5 = ResnetBlock(256)
+        self.resnet6 = ResnetBlock(256)
         
         # decoder
         self.convT1 = nn.ConvTranspose2d(256, 128, 4, 2, 1)
@@ -178,9 +178,9 @@ class Generator(nn.Module):
         out = self.resnet1(out)
         out = self.resnet2(out)
         out = self.resnet3(out)
-        # out = self.resnet4(out)
-        # out = self.resnet5(out)
-        # out = self.resnet6(out)
+        out = self.resnet4(out)
+        out = self.resnet5(out)
+        out = self.resnet6(out)
 
         # decoder
         out = self.act13(self.norm4(self.convT1(out)))
@@ -295,6 +295,10 @@ def denorm_for_print(image):
     return image
 
 def log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, steps_done, save=False):
+
+    monitor_X = monitor_X.detach()
+    monitor_Y = monitor_Y.detach()
+
     fake_X = G_YtoX(monitor_Y)
     fake_Y = G_XtoY(monitor_X)
 
@@ -428,8 +432,8 @@ for i_epoch in range(nb_epochs):
             D_loss = D_real_loss + D_fake_loss
 
             # logging scalars and weights
-            log_weights(D_X, 'D_X', steps_done)
-            log_weights(D_Y, 'D_Y', steps_done)
+            # log_weights(D_X, 'D_X', steps_done)
+            # log_weights(D_Y, 'D_Y', steps_done)
 
             writer.add_scalar('discriminator loss on real X', D_X_real_loss.item(), global_step=steps_done)
             writer.add_scalar('discriminator loss on real Y', D_Y_real_loss.item(), global_step=steps_done)
@@ -438,6 +442,14 @@ for i_epoch in range(nb_epochs):
             writer.add_scalar('total discriminator loss on real images', D_real_loss.item(), global_step=steps_done)
             writer.add_scalar('total discriminator loss on fake images', D_fake_loss.item(), global_step=steps_done)
             writer.add_scalar('total discriminator loss', D_loss.item(), global_step=steps_done)
+
+            del D_X_real_loss
+            del D_X_fake_loss
+            del D_Y_real_loss
+            del D_Y_fake_loss
+            del D_real_loss
+            del D_fake_loss
+            del D_loss
 
             ########################################################################
             # Generator Loss
@@ -497,8 +509,8 @@ for i_epoch in range(nb_epochs):
             G_loss = G_X_loss + G_Y_loss
      
             # logging scalars and weights
-            log_weights(G_XtoY, 'G_XtoY', steps_done)
-            log_weights(G_YtoX, 'G_YtoX', steps_done)
+            # log_weights(G_XtoY, 'G_XtoY', steps_done)
+            # log_weights(G_YtoX, 'G_YtoX', steps_done)
 
             writer.add_scalar('generator X to Y loss', G_XtoY_loss.item(), global_step=steps_done)
             writer.add_scalar('generator Y to X loss', G_YtoX_loss.item(), global_step=steps_done)
@@ -507,6 +519,14 @@ for i_epoch in range(nb_epochs):
             writer.add_scalar('total generator loss for X', G_X_loss.item(), global_step=steps_done)
             writer.add_scalar('total generator loss for Y', G_Y_loss.item(), global_step=steps_done)
             writer.add_scalar('total generator loss', G_loss.item(), global_step=steps_done)
+
+            del G_XtoY_loss
+            del G_YtoX_loss
+            del G_XtoYtoX_loss
+            del G_YtoXtoY_loss
+            del G_X_loss
+            del G_Y_loss
+            del G_loss
 
             if steps_done % 50 == 0:
                 log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, steps_done)
