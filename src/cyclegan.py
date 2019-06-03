@@ -166,13 +166,13 @@ class Generator(nn.Module):
         # decoder
         # https://distill.pub/2016/deconv-checkerboard/
         # self.convT1 = nn.ConvTranspose2d(256, 128, 3, 2, 1, 1) # 256 x 64 x 64 => 128 x 128 x 128
-        self.up1 = nn.Upsample(scale_factor=2, mode='bilinear') # 256 x 256 x 256 => 256 x 512 x 512
+        self.up1 = nn.Upsample(scale_factor=2) # 256 x 256 x 256 => 256 x 512 x 512
         self.pad2 = nn.ReflectionPad2d(1)
         self.conv4 = nn.Conv2d(256, 128, 3, 1, 0) # 256 x 512 x 512 => 128 x 256 x 256
         self.norm4 = nn.InstanceNorm2d(128)
         self.act13 = nn.ReLU()
         # self.convT2 = nn.ConvTranspose2d(128, 64, 3, 2, 1, 1) # 128 x 128 x 128 => 64 x 256 x 256
-        self.up2 = nn.Upsample(scale_factor=2, mode='bilinear') # 128 x 256 x 256 => 128 x 512 x 512
+        self.up2 = nn.Upsample(scale_factor=2) # 128 x 256 x 256 => 128 x 512 x 512
         self.pad3 = nn.ReflectionPad2d(1)
         self.conv5 = nn.Conv2d(128, 64, 3, 1, 0) # 128 x 512 x 512 => 64 x 256 x 256
         self.norm5 = nn.InstanceNorm2d(64)
