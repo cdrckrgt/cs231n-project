@@ -142,13 +142,13 @@ class Generator(nn.Module):
  
         # encoder 
         self.pad1 = nn.ReflectionPad2d(3)
-        self.conv1 = nn.Conv2d(3, 64, 7, 1, 0) # 3 x 256 x 256 => 64 x 256 x 256
+        self.conv1 = nn.Conv2d(3, 64, 7, 1, 0) # 3 x 262 x 262 => 64 x 256 x 256
         self.norm1 = nn.InstanceNorm2d(64)
         self.act1 = nn.ReLU()
-        self.conv2 = nn.Conv2d(64, 128, 3, 2, 1) # 64 x 256 x 256 => 128 x 256 x 256
+        self.conv2 = nn.Conv2d(64, 128, 3, 2, 1) # 64 x 256 x 256 => 128 x 128 x 128, fractional striding
         self.norm2 = nn.InstanceNorm2d(128)
         self.act2 = nn.ReLU()
-        self.conv3 = nn.Conv2d(128, 256, 3, 2, 1) # 128 x 256 x 256 => 256 x 256 x 256
+        self.conv3 = nn.Conv2d(128, 256, 3, 2, 1) # 128 x 128 x 128 => 256 x 64 x 64, fractional striding
         self.norm3 = nn.InstanceNorm2d(256)
         self.act3 = nn.ReLU()
 
@@ -164,14 +164,21 @@ class Generator(nn.Module):
         self.resnet9 = ResnetBlock(256)
         
         # decoder
-        self.convT1 = nn.ConvTranspose2d(256, 128, 3, 2, 1, 1)
+        # https://distill.pub/2016/deconv-checkerboard/
+        # self.convT1 = nn.ConvTranspose2d(256, 128, 3, 2, 1, 1) # 256 x 64 x 64 => 128 x 128 x 128
+        self.up1 = nn.Upsample(scale_factor=2, mode='bilinear') # 256 x 256 x 256 => 256 x 512 x 512
+        self.pad2 = nn.ReflectionPad2d(1)
+        self.conv4 = nn.Conv2d(256, 128, 3, 1, 0) # 256 x 512 x 512 => 128 x 256 x 256
         self.norm4 = nn.InstanceNorm2d(128)
         self.act13 = nn.ReLU()
-        self.convT2 = nn.ConvTranspose2d(128, 64, 3, 2, 1, 1)
+        # self.convT2 = nn.ConvTranspose2d(128, 64, 3, 2, 1, 1) # 128 x 128 x 128 => 64 x 256 x 256
+        self.up2 = nn.Upsample(scale_factor=2, mode='bilinear') # 128 x 256 x 256 => 128 x 512 x 512
+        self.pad3 = nn.ReflectionPad2d(1)
+        self.conv5 = nn.Conv2d(128, 64, 3, 1, 0) # 128 x 512 x 512 => 64 x 256 x 256
         self.norm5 = nn.InstanceNorm2d(64)
         self.act14 = nn.ReLU()
-        self.pad2 = nn.ReflectionPad2d(3)
-        self.conv4 = nn.Conv2d(64, 3, 7, 1, 0)
+        self.pad4 = nn.ReflectionPad2d(3)
+        self.conv4 = nn.Conv2d(64, 3, 7, 1, 0) # 64 x 256 x 256 => 3 x 256 x 256
         self.act15 = nn.Tanh()
 
     def forward(self, x):
@@ -192,9 +199,11 @@ class Generator(nn.Module):
         out = self.resnet9(out)
 
         # decoder
-        out = self.act13(self.norm4(self.convT1(out)))
-        out = self.act14(self.norm5(self.convT2(out)))
-        out = self.act15(self.conv4(self.pad2(out)))
+        # out = self.act13(self.norm4(self.convT1(out)))
+        # out = self.act14(self.norm5(self.convT2(out)))
+        out = self.act13(self.norm4(self.conv4(self.pad2(self.up1(x)))))
+        out = self.act14(self.norm5(self.conv5(self.pad3(self.up2(x)))))
+        out = self.act15(self.conv4(self.pad4(out)))
         return out
 
 class Discriminator(nn.Module):
@@ -506,8 +515,8 @@ for i_epoch in range(nb_epochs):
                 real_Y_pred = torch.sigmoid(real_Y_pred)
 
                 G_YtoXtoY_loss = torch.sum(real_Y_pred \
-                    * (gamma * torch.sum(torch.abs(reconstructed_Y_features - real_Y_features), (1, 2, 3)) \
-                    + (1 - gamma) * torch.sum(torch.abs(reconstructed_Y - real_img_Y), (1, 2, 3)))) / (batch_size * 3 * 256 * 256)
+                    * (gamma * cycle_criterion(reconstructed_Y_features, real_Y_features) \
+                    + (1 - gamma) * cycle_criterion(reconstructed_Y - real_img_Y))) / np.prod(D_output_shape)
             else:
                 G_YtoXtoY_loss = cycle_criterion(real_img_Y, reconstructed_Y)
 
@@ -530,8 +539,8 @@ for i_epoch in range(nb_epochs):
                 real_X_pred = torch.sigmoid(real_X_pred)
 
                 G_XtoYtoX_loss = torch.sum(real_X_pred \
-                    * (gamma * torch.sum(torch.abs(reconstructed_X_features - real_X_features), (1, 2, 3)) \
-                    + (1 - gamma) * torch.sum(torch.abs(reconstructed_X - real_img_X), (1, 2, 3)))) / (batch_size * 3 * 256 * 256)
+                    * (gamma * cycle_criterion(reconstructed_X_features, real_X_features) \
+                    + (1 - gamma) * cycle_criterion(reconstructed_X - real_img_X))) / np.prod(D_output_shape)
             else:
                 G_XtoYtoX_loss = cycle_criterion(real_img_X, reconstructed_X)
 
