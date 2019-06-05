@@ -32,14 +32,16 @@ from torchsummary import summary
 ################################################################################
 
 # format is date.run_number this day
-run = '060219.run09'
+run = '060419.run02'
+epoch = 50
+
 
 ################################################################################
 # Setting hyperparameters
 ################################################################################
 
-batch_size = 4
-nrows = 2
+batch_size = 8
+nrows = 4
 ncols = 2
 
 device = torch.device('cpu')
@@ -64,8 +66,8 @@ transform_photo = transforms.Compose([
     transforms.Normalize((0.5,0.5,0.5), (0.5,0.5,0.5)),
 ])
 
-photo_data = datasets.ImageFolder('../data/tu-berlin-trees/photo/', transform_photo)
-sketch_data = datasets.ImageFolder('../data/tu-berlin-trees/sketch/', transform_sketch)
+photo_data = datasets.ImageFolder('../data/palm_val/photo/', transform_photo)
+sketch_data = datasets.ImageFolder('../data/palm_val/sketch/', transform_sketch)
 
 class DualDomainDataset(Dataset):
     def __init__(self, datasetA, datasetB):
@@ -92,6 +94,7 @@ train_loader = DataLoader(dataset=train_data, batch_size=batch_size, shuffle=Fal
 ################################################################################
 # Defining Generator and Discriminator Architectures
 ################################################################################
+
 
 class ResnetBlock(nn.Module):
     def __init__(self, dim):
@@ -139,20 +142,18 @@ class Generator(nn.Module):
         
         # decoder
         # https://distill.pub/2016/deconv-checkerboard/
-        self.convT1 = nn.ConvTranspose2d(256, 128, 3, 2, 1, 1) # 256 x 64 x 64 => 128 x 128 x 128
-        # self.up1 = nn.Upsample(scale_factor=2) # 256 x 256 x 256 => 256 x 512 x 512
-        # self.pad2 = nn.ReflectionPad2d(1)
-        # self.conv4 = nn.Conv2d(256, 128, 3, 1, 0) # 256 x 512 x 512 => 128 x 256 x 256
+        self.up1 = nn.Upsample(scale_factor=2) # 256 x 256 x 256 => 256 x 512 x 512
+        self.pad2 = nn.ReflectionPad2d(1)
+        self.conv4 = nn.Conv2d(256, 128, 3, 1, 0) # 256 x 512 x 512 => 128 x 256 x 256
         self.norm4 = nn.InstanceNorm2d(128)
         self.act13 = nn.ReLU()
-        self.convT2 = nn.ConvTranspose2d(128, 64, 3, 2, 1, 1) # 128 x 128 x 128 => 64 x 256 x 256
-        # self.up2 = nn.Upsample(scale_factor=2) # 128 x 256 x 256 => 128 x 512 x 512
-        # self.pad3 = nn.ReflectionPad2d(1)
-        # self.conv5 = nn.Conv2d(128, 64, 3, 1, 0) # 128 x 512 x 512 => 64 x 256 x 256
+        self.up2 = nn.Upsample(scale_factor=2) # 128 x 256 x 256 => 128 x 512 x 512
+        self.pad3 = nn.ReflectionPad2d(1)
+        self.conv5 = nn.Conv2d(128, 64, 3, 1, 0) # 128 x 512 x 512 => 64 x 256 x 256
         self.norm5 = nn.InstanceNorm2d(64)
         self.act14 = nn.ReLU()
         self.pad4 = nn.ReflectionPad2d(3)
-        self.conv4 = nn.Conv2d(64, 3, 7, 1, 0) # 64 x 256 x 256 => 3 x 256 x 256
+        self.conv6 = nn.Conv2d(64, 3, 7, 1, 0) # 64 x 256 x 256 => 3 x 256 x 256
         self.act15 = nn.Tanh()
 
     def forward(self, x):
@@ -161,7 +162,7 @@ class Generator(nn.Module):
         out = self.act2(self.norm2(self.conv2(out)))
         out = self.act3(self.norm3(self.conv3(out)))
 
-        # resnet
+        # transformer
         out = self.resnet1(out)
         out = self.resnet2(out)
         out = self.resnet3(out)
@@ -173,17 +174,15 @@ class Generator(nn.Module):
         out = self.resnet9(out)
 
         # decoder
-        out = self.act13(self.norm4(self.convT1(out)))
-        out = self.act14(self.norm5(self.convT2(out)))
-        # out = self.act13(self.norm4(self.conv4(self.pad2(self.up1(x)))))
-        # out = self.act14(self.norm5(self.conv5(self.pad3(self.up2(x)))))
-        out = self.act15(self.conv4(self.pad4(out)))
+        out = self.act13(self.norm4(self.conv4(self.pad2(self.up1(out)))))
+        out = self.act14(self.norm5(self.conv5(self.pad3(self.up2(out)))))
+        out = self.act15(self.conv6(self.pad4(out)))
         return out
 
 G_XtoY = Generator()
-G_XtoY.load_state_dict(torch.load('../weights/060219.run09/G_XtoY.epoch30.pt', map_location=device))
+G_XtoY.load_state_dict(torch.load('../weights/{}/G_XtoY.epoch{}.pt'.format(run, epoch), map_location=device))
 G_YtoX = Generator()
-G_YtoX.load_state_dict(torch.load('../weights/060219.run09/G_YtoX.epoch30.pt', map_location=device))
+G_YtoX.load_state_dict(torch.load('../weights/{}/G_YtoX.epoch{}.pt'.format(run, epoch), map_location=device))
 
 
 ################################################################################
@@ -215,21 +214,57 @@ def log_train_img(G_XtoY, G_YtoX, monitor_X, monitor_Y, steps_done):
     fake_X = G_YtoX(monitor_Y)
     fake_Y = G_XtoY(monitor_X)
 
+    reconstructed_X = G_YtoX(fake_Y)
+    reconstructed_Y = G_XtoY(fake_X)
+
     X = denorm_for_print(monitor_X)
     fake_Y = denorm_for_print(fake_Y)
     Y = denorm_for_print(monitor_Y)
     fake_X = denorm_for_print(fake_X)
+    reconstructed_X = denorm_for_print(reconstructed_X)
+    reconstructed_Y = denorm_for_print(reconstructed_Y)
 
-    merged_XtoY = merge_images(X, fake_Y, nrows, ncols).transpose(1, 2, 0)
+    # merged_XtoY = merge_images(X, fake_Y, nrows, ncols).transpose(1, 2, 0)
 
-    merged_YtoX = merge_images(Y, fake_X, nrows, ncols).transpose(1, 2, 0)
+    # merged_YtoX = merge_images(Y, fake_X, nrows, ncols).transpose(1, 2, 0)
 
+    # merged_Xtorecons = merge_images(X, reconstructed_X, nrows, ncols).transpose(1, 2, 0)
+    # merged_Ytorecons = merge_images(Y, reconstructed_Y, nrows, ncols).transpose(1, 2, 0)
+
+    os.system('rm -rf ../saved_imgs/{}'.format(run))
     if not os.path.exists('../saved_imgs/{}'.format(run)):
         os.makedirs('../saved_imgs/{}'.format(run))
-    path = '../saved_imgs/{}/iter_{}-Y-X.png'.format(run, steps_done)
-    scipy.misc.imsave(path, merged_YtoX)
-    path = '../saved_imgs/{}/iter_{}-X-Y.png'.format(run, steps_done)
-    scipy.misc.imsave(path, merged_XtoY)
+    if not os.path.exists('../saved_imgs/{}/X/'.format(run)):
+        os.makedirs('../saved_imgs/{}/X/'.format(run))
+    if not os.path.exists('../saved_imgs/{}/Y/'.format(run)):
+        os.makedirs('../saved_imgs/{}/Y/'.format(run))
+    if not os.path.exists('../saved_imgs/{}/fake_X/'.format(run)):
+        os.makedirs('../saved_imgs/{}/fake_X/'.format(run))
+    if not os.path.exists('../saved_imgs/{}/fake_Y/'.format(run)):
+        os.makedirs('../saved_imgs/{}/fake_Y/'.format(run))
+    if not os.path.exists('../saved_imgs/{}/recons_Y/'.format(run)):
+        os.makedirs('../saved_imgs/{}/recons_Y/'.format(run))
+    if not os.path.exists('../saved_imgs/{}/recons_X/'.format(run)):
+        os.makedirs('../saved_imgs/{}/recons_X/'.format(run))
+
+    def save_to_path(batch, name, run, steps_done):
+        for i in range(batch_size):
+            im = batch[i, :, :, :].transpose(1, 2, 0)
+            path = '../saved_imgs/{}/{}/{}.{}.png'.format(run, name, steps_done, i)
+            scipy.misc.imsave(path, im)
+    names = {'X' : X, 'Y' : Y, 'fake_X' : fake_X, 'fake_Y' : fake_Y, 'recons_X' : reconstructed_X, 'recons_Y' : reconstructed_Y}
+
+    for name, batch in names.items():
+        save_to_path(batch, name, run, steps_done)
+
+    #  path = '../saved_imgs/{}/iter_{}-Y-X.png'.format(run, steps_done)
+    #  scipy.misc.imsave(path, merged_YtoX)
+    #  path = '../saved_imgs/{}/iter_{}-X-Y.png'.format(run, steps_done)
+    #  scipy.misc.imsave(path, merged_XtoY)
+    #  path = '../saved_imgs/{}/iter_{}-X-recons_X.png'.format(run, steps_done)
+    #  scipy.misc.imsave(path, merged_Xtorecons)
+    #  path = '../saved_imgs/{}/iter_{}-Y-recons_Y.png'.format(run, steps_done)
+    #  scipy.misc.imsave(path, merged_Ytorecons)
 
 def set_grad(model, requires_grad):
     for param in model.parameters():
@@ -240,8 +275,9 @@ def set_grad(model, requires_grad):
 # Evaluation Loop
 ################################################################################
 
-
 for i_batch, data in enumerate(train_loader):
+
+    if i_batch > 4: break
 
     # unpacking data from loader
     X_data, Y_data = data

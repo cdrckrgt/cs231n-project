@@ -21,7 +21,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, Dataset
 from torchsummary import summary
@@ -32,7 +32,7 @@ from torchsummary import summary
 ################################################################################
 
 # format is date.run_number this day
-run = '060219.run10'
+run = '060419.run02'
 if not os.path.exists('../weights/{}'.format(run)):
     os.mkdir('../weights/{}'.format(run))
 if not os.path.exists('../logs/{}'.format(run)):
@@ -51,15 +51,15 @@ ncols = 2
 nb_epochs = 200
 lr = 2e-4
 betas = (0.5, 0.999)
-use_label_smoothing = False
+use_label_smoothing = True
 lambda_ = 10.
-use_noisy_labels = False
+use_noisy_labels = True
 noisy_p = 0.05
 should_halve_loss = True
 buffer_max_size = 50
 use_replay_buffer = True
 # https://ssnl.github.io/better_cycles/report.pdf
-use_better_cycles = False
+use_better_cycles = True
 gamma = 0.1
 gamma_start = gamma
 gamma_end = 0.95
@@ -90,8 +90,8 @@ transform_photo = transforms.Compose([
     transforms.Normalize((0.5,0.5,0.5), (0.5,0.5,0.5)),
 ])
 
-photo_data = datasets.ImageFolder('../data/sketchydata_tight/photo/', transform_photo)
-sketch_data = datasets.ImageFolder('../data/sketchydata_tight/sketch/', transform_sketch)
+photo_data = datasets.ImageFolder('../data/palm_train/photo/', transform_photo)
+sketch_data = datasets.ImageFolder('../data/palm_train/sketch/', transform_sketch)
 
 class DualDomainDataset(Dataset):
     def __init__(self, datasetA, datasetB):
@@ -251,8 +251,12 @@ D_Y.apply(init_weights)
 G_opt = optim.Adam(list(G_XtoY.parameters()) + list(G_YtoX.parameters()), lr=lr, betas=betas)
 D_opt = optim.Adam(list(D_X.parameters()) + list(D_Y.parameters()), lr=lr, betas=betas)
 
-G_scheduler = StepLR(G_opt, 1, lr / 100.)
-D_scheduler = StepLR(D_opt, 1, lr / 100.)
+def lambda_rule(epoch):
+    # lr_l = 1.0 - max(0, epoch + nb_epochs - 100) / float(100 + 1)
+    lr_l = 1.0
+    return lr_l
+G_scheduler = LambdaLR(G_opt, lr_lambda=lambda_rule)
+D_scheduler = LambdaLR(D_opt, lr_lambda=lambda_rule)
 
 D_output_shape = (batch_size, 1, 30, 30)
 D_criterion = nn.MSELoss()
@@ -369,19 +373,17 @@ monitor_Y, _ = monitor_Y_data
 monitor_X = monitor_X.to(device)
 monitor_Y = monitor_Y.to(device)
 
-history = Buffer(buffer_max_size)
+fake_X_history = Buffer(buffer_max_size)
+fake_Y_history = Buffer(buffer_max_size)
 
 from progress.bar import IncrementalBar
 
 for i_epoch in range(nb_epochs):
 
     print('i_epoch', i_epoch)
-    writer.add_scalar('lambda', lambda_, global_step=steps_done)
-    writer.add_scalar('gamma', gamma, global_step=steps_done)
-
-    if i_epoch > 99:
-        G_scheduler.step()
-        D_scheduler.step()
+    if use_better_cycles:
+        writer.add_scalar('lambda', lambda_, global_step=steps_done)
+        writer.add_scalar('gamma', gamma, global_step=steps_done)
 
     with IncrementalBar('batches', max=len(train_loader)) as bar:
         for i_batch, data in enumerate(train_loader):
@@ -412,7 +414,7 @@ for i_epoch in range(nb_epochs):
             fake_label = torch.zeros(D_output_shape).to(device)
             if use_label_smoothing:
                 true_label = torch.tensor(np.random.uniform(low=0.7, high=1.2, size=D_output_shape)).to(device).float()
-                fake_label = torch.tensor(np.random.uniform(low=0.0, high=0.3, size=D_output_shape)).to(device).float()
+                # fake_label = torch.tensor(np.random.uniform(low=0.0, high=0.3, size=D_output_shape)).to(device).float()
             if use_noisy_labels and np.random.rand() < noisy_p:
                 true_label, fake_label = fake_label, true_label
 
@@ -439,8 +441,8 @@ for i_epoch in range(nb_epochs):
             fake_img_Y = G_XtoY(real_img_X)
 
             if use_replay_buffer:
-                fake_img_X = history.push(fake_img_X)
-                fake_img_Y = history.push(fake_img_Y)
+                fake_img_X = fake_X_history.push(fake_img_X)
+                fake_img_Y = fake_Y_history.push(fake_img_Y)
 
                 assert fake_img_X.shape == fake_img_Y.shape, 'mismatch in data shape from buffer'
                 assert fake_img_X.shape == real_img_X.shape, 'incorrect shape returned from buffer'
@@ -508,11 +510,11 @@ for i_epoch in range(nb_epochs):
             reconstructed_Y = G_XtoY(fake_img_X)
             if use_better_cycles:
                 _, reconstructed_Y_features = D_Y(reconstructed_Y)
-                real_Y_pred = torch.sigmoid(real_Y_pred)
+                real_Y_pred = torch.sigmoid(real_Y_pred).detach()
 
                 G_YtoXtoY_loss = torch.sum(real_Y_pred \
                     * (gamma * cycle_criterion(reconstructed_Y_features, real_Y_features) \
-                    + (1 - gamma) * cycle_criterion(reconstructed_Y - real_img_Y))) / np.prod(D_output_shape)
+                    + (1 - gamma) * cycle_criterion(reconstructed_Y, real_img_Y))) / np.prod(D_output_shape)
             else:
                 G_YtoXtoY_loss = cycle_criterion(real_img_Y, reconstructed_Y)
 
@@ -532,11 +534,11 @@ for i_epoch in range(nb_epochs):
             reconstructed_X = G_YtoX(fake_img_Y)
             if use_better_cycles:
                 _, reconstructed_X_features = D_X(reconstructed_X)
-                real_X_pred = torch.sigmoid(real_X_pred)
+                real_X_pred = torch.sigmoid(real_X_pred).detach()
 
                 G_XtoYtoX_loss = torch.sum(real_X_pred \
                     * (gamma * cycle_criterion(reconstructed_X_features, real_X_features) \
-                    + (1 - gamma) * cycle_criterion(reconstructed_X - real_img_X))) / np.prod(D_output_shape)
+                    + (1 - gamma) * cycle_criterion(reconstructed_X, real_img_X))) / np.prod(D_output_shape)
             else:
                 G_XtoYtoX_loss = cycle_criterion(real_img_X, reconstructed_X)
 
@@ -574,12 +576,15 @@ for i_epoch in range(nb_epochs):
             bar.next()
 
     ############################################################################
-    # Gamma and Lambda Scheduling
+    # Gamma and Lambda and LR Scheduling
     ############################################################################
 
     if use_better_cycles:
         lambda_ -= (lambda_start - lambda_end) / nb_epochs
         gamma += (gamma_end - gamma_start) / nb_epochs
+
+    G_scheduler.step()
+    D_scheduler.step()
 
     ############################################################################
     # Model Checkpointing

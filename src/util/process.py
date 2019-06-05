@@ -16,12 +16,13 @@ def canny(image, sigma = 0.333):
 
     return edged
 
-for image_name in os.listdir('./tree_synset/'):
+for image_name in os.listdir('./palm_synset/'):
     print('processing image: ', image_name)
-    image = np.asarray(Image.open('tree_synset/' + image_name))
+    image = np.asarray(Image.open('palm_synset/' + image_name))
+    image = cv2.bilateralFilter(image, 9, 160 ,160)
     image = canny(image)
     image = Image.fromarray(image)
     image = ImageOps.invert(image)
     image = image.convert('1')
-    image.save('./tree_synset_edged_tight/' + image_name[:-5] + '.png')
+    image.save('./palm_synset_edged/' + image_name[:-5] + '.png')
 
