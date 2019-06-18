@@ -1,5 +1,5 @@
 # kev and ced's project
 
-probably something with GANs, not sure  yet
+Generative Networks for Art School Rejects
 
-apr 24, finishing proposal
+check out www.cedrick.cc for the poster!
