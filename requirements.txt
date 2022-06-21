@@ -20,7 +20,7 @@ matplotlib==3.0.1
 mkl-fft==1.0.6
 mkl-random==1.0.1
 networkx==2.3
-numpy==1.16.4
+numpy==1.22.0
 olefile==0.46
 Pillow==5.4.1
 protobuf==3.6.1
